@@ -23,4 +23,9 @@ Generate your own Google Cloud credentials, this includes:
 - Google Sheets
 
 Configure your drive destination folder, and your .env file to contain its respective folder and sheet IDs.
-IMPORTANT: Your own API key!
+IMPORTANT: API KEY
+
+Do not forget to add to your .gitignore. 
+Also, do not forget the Google Sheets Developer Script
+(also add the credentials service email to each of your APIs)
+
