@@ -15,3 +15,12 @@ The parsed text and corresponding AI classifications are pushed seamlessly to Go
 
 Production & Deployment
 Cross-Platform Desktop App: The entire application is packaged using Electron, distributing native desktop binaries for both macOS and Windows users to streamline local deployment and enhance the TA workflow.
+
+HOW TO RUN:
+
+Generate your own Google Cloud credentials, this includes: 
+- Google Drive
+- Google Sheets
+
+Configure your drive destination folder, and your .env file to contain its respective folder and sheet IDs.
+IMPORTANT: Your own API key!
