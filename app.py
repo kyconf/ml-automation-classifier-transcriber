@@ -10,7 +10,7 @@ app = Flask(__name__, static_folder='./project_backup')  # Set the current direc
 CORS(app, resources={r"/*": {"origins": "*"}})  # Allow all origins for development
 
 # Load the fine-tuned model and tokenizer
-model_path = "./project_backup/fine_tuned_model"
+model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "project_backup", "fine_tuned_model")
 try:
     model = AutoModelForSeq2SeqLM.from_pretrained(model_path)
     tokenizer = AutoTokenizer.from_pretrained(model_path)
@@ -234,6 +234,6 @@ def upload_pdf():
 if __name__ == '__main__':
     try:
         print("Starting server...")
-        app.run(debug=True, port=5000)  # Back to port 5000
+        app.run(debug=False, port=5001)  # Back to port 5000
     except Exception as e:
         print(f"Error starting server: {str(e)}")

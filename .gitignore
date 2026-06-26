@@ -9,6 +9,7 @@ lerna-debug.log*
 
 sheets_credentials.json
 drive_credentials.json
+drive_token.json
 .env
 node_modules
 converted_images

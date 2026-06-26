@@ -52,7 +52,7 @@ function startServers() {
     // Mac/Linux: Open a new terminal window
     const serverPath = isDev ? "server.js" : path.join(__dirname, "server.js");
     const pythonPath = isDev ? "app.py" : path.join(__dirname, "app.py");
-    exec(`osascript -e 'tell app "Terminal" to do script "node ${serverPath} & python ${pythonPath}"'`);
+    exec(`osascript -e 'tell app "Terminal" to do script "node ${serverPath} & python3.11 ${pythonPath}"'`);
   }
 }
 
