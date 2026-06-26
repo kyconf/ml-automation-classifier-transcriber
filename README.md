@@ -22,6 +22,8 @@ Generate your own Google Cloud credentials, this includes:
 - Google Drive
 - Google Sheets
 
+Some files excluded due to the size it takes up i.e. classification model.
+
 Configure your drive destination folder, and your .env file to contain its respective folder and sheet IDs.
 IMPORTANT: API KEY
 
