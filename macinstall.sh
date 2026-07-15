@@ -7,6 +7,12 @@ if [[ "$EUID" -ne 0 ]]; then
     echo "⚠️ Warning: You are not running as root. Some installations might require sudo."
 fi
 
+# Ensure Homebrew is available
+if ! command -v brew &> /dev/null; then
+    echo "❌ Homebrew not found. Install it from https://brew.sh first."
+    exit 1
+fi
+
 # Update package managers
 echo "🔄 Updating Homebrew..."
 brew update
@@ -15,18 +21,17 @@ brew update
 echo "🍺 Installing dependencies via Homebrew..."
 brew install libtiff poppler cairo jpeg
 
-# Install specific Python version (3.11.9)
-echo "🐍 Installing Python 3.11.9..."
+# Install specific Python version (3.11)
+echo "🐍 Installing Python 3.11..."
 brew install python@3.11
 
-# Ensure the correct Python version is being used
-PYTHON_PATH=$(brew --prefix python@3.11)/bin/python3.11
+# Let Homebrew manage linking (works on both Apple Silicon and Intel).
+brew link --overwrite python@3.11 2>/dev/null || true
+PYTHON_PATH="$(brew --prefix python@3.11)/bin/python3.11"
 if [ -f "$PYTHON_PATH" ]; then
-    echo "✅ Python 3.11.9 installed successfully!"
-    ln -sf "$PYTHON_PATH" /usr/local/bin/python3
-    ln -sf "$PYTHON_PATH" /usr/local/bin/python
+    echo "✅ Python 3.11 installed at $PYTHON_PATH"
 else
-    echo "❌ Failed to install Python 3.11.9!"
+    echo "❌ Failed to install Python 3.11!"
     exit 1
 fi
 

@@ -10,8 +10,9 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "server": "nodemon server.js",
-    "python-server": "python app.py",
-    "electron-dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
+    "python-server": "python3 app.py",
+    "dev-all": "concurrently -k --kill-signal SIGKILL \"vite\" \"nodemon server.js\" \"python3.10 app.py\"",
+    "electron-dev": "concurrently -k --kill-signal SIGKILL -s first \"vite\" \"wait-on http://localhost:5173 && electron .\"",
     "electron-pack": "electron-builder --dir",
     "electron-build": "electron-builder"
   },
@@ -73,17 +74,10 @@
     "files": [
       "build/**/*",
       "electron.js",
+      "preflight.html",
       "server.js",
       "auth_drive.js",
-      "app.py",
-      "requirements.txt",
-      "sheets_credentials.json",
-      "drive_credentials.json",
-      ".env",
-      "xlsx.html",
-      "macinstall.sh",
-      "wininstall.ps1",
-      "project_backup/**"
+      "xlsx.html"
     ],
     "directories": {
       "buildResources": "assets",
@@ -91,12 +85,17 @@
     },
     "extraResources": [
       {
-        "from": "../.env",
-        "to": ".env"
+        "from": "pydist/classifier",
+        "to": "classifier"
+      },
+      {
+        "from": "vendor/poppler",
+        "to": "vendor/poppler"
       }
     ],
     "mac": {
-      "target": "dmg"
+      "target": "dmg",
+      "identity": null
     },
     "win": {
       "target": "nsis"

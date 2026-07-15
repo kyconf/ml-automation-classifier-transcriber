@@ -5,12 +5,18 @@ import torch
 import pdfplumber
 from werkzeug.utils import secure_filename
 import os
+import sys
+import tempfile
 
 app = Flask(__name__, static_folder='./project_backup')  # Set the current directory as static folder
 CORS(app, resources={r"/*": {"origins": "*"}})  # Allow all origins for development
 
+# Resolve bundled data. When packaged by PyInstaller, files added via --add-data
+# live under sys._MEIPASS; in normal runs they sit next to this script.
+BASE_DIR = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+
 # Load the fine-tuned model and tokenizer
-model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "project_backup", "fine_tuned_model")
+model_path = os.path.join(BASE_DIR, "project_backup", "fine_tuned_model")
 try:
     model = AutoModelForSeq2SeqLM.from_pretrained(model_path)
     tokenizer = AutoTokenizer.from_pretrained(model_path)
@@ -21,7 +27,8 @@ except Exception as e:
     print(f"Error loading model: {str(e)}")
 
 # Add these routes to app.py
-UPLOAD_FOLDER = 'uploads'
+# Use a writable temp dir — the app bundle's own folder is read-only once installed.
+UPLOAD_FOLDER = os.path.join(tempfile.gettempdir(), 'exam_transcriber_uploads')
 ALLOWED_EXTENSIONS = {'pdf'}
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER

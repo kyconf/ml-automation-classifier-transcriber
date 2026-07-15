@@ -1,77 +1,57 @@
-import React, { useState, useEffect } from 'react';
-import './loader.module.css';
+import React, { useState } from 'react';
+import { FileText, AlertTriangle } from 'lucide-react';
+import { API_BASE } from './config';
+import { useApp } from './AppContext';
+import { Page, Card, PrimaryButton } from './components/Layout';
 
 function PDFPage() {
   const [loading, setLoading] = useState(false);
-  const [transcriptionComplete, setTranscriptionComplete] = useState(false);
-  const [showPopup, setShowPopup] = useState(false);
+  const { setBusy, toast } = useApp();
 
   const handleProcessPDFs = async () => {
     setLoading(true);
+    setBusy(true);
     try {
-      const response = await fetch('http://localhost:3000/process-pdf', {
+      const response = await fetch(`${API_BASE}/process-pdf`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
       });
-
       const data = await response.json();
-      
+
       if (response.ok && data.success) {
-        alert(data.message);
+        toast(data.message || 'PDFs processed successfully.', 'success');
       } else {
-        // Show the detailed error message if available
-        alert(`Error: ${data.details || data.message || 'Error processing PDFs.'}`);
+        toast(`Error: ${data.details || data.message || 'Could not process PDFs.'}`, 'error');
       }
     } catch (error) {
       console.error('Error processing PDFs:', error);
-      alert('An error occurred while processing PDFs.');
+      toast('An error occurred while processing PDFs.', 'error');
     } finally {
       setLoading(false);
+      setBusy(false);
     }
   };
 
-  const closePopup = () => {
-    setShowPopup(false);
-  };
-
   return (
-    <div className="h-full border-l flex-1 flex flex-col p-4 bg-gray-800 text-white">
-      <header className="border-p border-gray-300 p-4">
-        <h1 className="text-2xl font-semibold text-center">PDF Transcription</h1>
-      </header>
-
-      <div className="flex-1 flex justify-center items-center">
-        <button
-          onClick={handleProcessPDFs}
-          disabled={loading}
-          className={`p-4 ${loading ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-500'} text-white rounded-lg text-xl hover:bg-blue-600 transition-colors font-bold`}
-        >
-          {loading ? 'Processing...' : 'TRANSCRIBE PDFS'}
-        </button>
-      </div>
-
-      {loading && (
-        <div className="flex justify-center items-center h-16">
-          <div className="loader"></div>
+    <Page title="PDF Transcription" subtitle="Convert PDF exams in your Drive folder into transcribed questions." connection="pdf">
+      <Card className="mx-auto flex max-w-lg flex-col items-center text-center">
+        <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-indigo-600/15 text-indigo-300">
+          <FileText size={26} />
         </div>
-      )}
+        <h2 className="text-lg font-semibold text-white">Process PDFs</h2>
+        <p className="mt-1 mb-6 text-sm text-slate-400">
+          Each page is converted to an image, transcribed, classified, and written to your sheet.
+        </p>
+        <PrimaryButton onClick={handleProcessPDFs} loading={loading}>
+          {loading ? 'Processing…' : 'Transcribe PDFs'}
+        </PrimaryButton>
 
-      <div className="flex-1 overflow-auto p-4">
-        <div className="p-4 space-y-4"></div>
-        <h1 className="text-center">Always check PDFs before processing!</h1>
-      </div>
-
-      {showPopup && (
-        <div className="fixed bottom-4 right-4 bg-green-500 text-white p-4 rounded-lg shadow-lg flex items-center">
-          <span>Transcription completed successfully!</span>
-          <button onClick={closePopup} className="ml-4 text-white font-bold">
-            X
-          </button>
+        <div className="mt-6 flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+          <AlertTriangle size={14} />
+          Always review your PDFs in Drive before processing.
         </div>
-      )}
-    </div>
+      </Card>
+    </Page>
   );
 }
 

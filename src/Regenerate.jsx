@@ -1,264 +1,243 @@
 import React, { useState, useEffect } from 'react';
-import './loader.module.css';
 import { ComboboxDemo } from '@/components/ui/combobox';
+import { API_BASE } from './config';
+import { useApp } from './AppContext';
+import { Page, Card, Field, PrimaryButton, Spinner, inputClass } from './components/Layout';
 
 function Regenerate() {
   const [sheetNames, setSheetNames] = useState([]);
   const [selectedSheet, setSelectedSheet] = useState('');
-  const [searchTerm, setSearchTerm] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [preview, setPreview] = useState(null);
-  const [transcriptionComplete, setTranscriptionComplete] = useState(false);
-  const [showPopup, setShowPopup] = useState(false);
-  const [inputFields, setInputFields] = useState(['']);
-  const [validationError, setValidationError] = useState('');
+  const [regenerating, setRegenerating] = useState(false);
   const [regeneratePrompt, setRegeneratePrompt] = useState('');
 
-  useEffect(() => {
-    fetchSheetNames();
-  }, []);
+  const [rows, setRows] = useState([]);
+  const [rowsLoading, setRowsLoading] = useState(false);
+  const [selectedRow, setSelectedRow] = useState('');
+
+  const [multiMode, setMultiMode] = useState(false);
+  const [rangeStart, setRangeStart] = useState('');
+  const [rangeEnd, setRangeEnd] = useState('');
+  const [validationError, setValidationError] = useState('');
+
+  const { setBusy, toast } = useApp();
+
+  useEffect(() => { fetchSheetNames(); }, []);
+  useEffect(() => { if (selectedSheet) fetchRows(selectedSheet); }, [selectedSheet]);
 
   const fetchSheetNames = async () => {
     try {
-      const response = await fetch('http://localhost:3000/sheet-names');
+      const response = await fetch(`${API_BASE}/sheet-names`);
       const data = await response.json();
-      
       if (data.success) {
         setSheetNames(data.sheetNames);
-        if (data.sheetNames.length > 0) {
-          setSelectedSheet(data.sheetNames[0]);
-        }
+        if (data.sheetNames.length > 0) setSelectedSheet(data.sheetNames[0]);
       } else {
         throw new Error(data.message);
       }
-    } catch (error) {
-      console.error('Error fetching sheet names:', error);
-      setError('Failed to load sheet names');
+    } catch (err) {
+      console.error('Error fetching sheet names:', err);
+      setError('Failed to load sheet names. Make sure the server is running.');
     } finally {
-      setLoading(false);
+      setInitialLoading(false);
     }
   };
 
-  const handleSheetChange = (event) => {
-    setSelectedSheet(event.target.value);
-  };
-
-  const addInputField = () => {
-    setInputFields([...inputFields, '']);
-    setValidationError('');
-  };
-
-  const removeInputField = (index) => {
-    const newInputFields = [...inputFields];
-    newInputFields.splice(index, 1);
-    setInputFields(newInputFields.length ? newInputFields : ['']);
-    setValidationError('');
-  };
-
-  const handleInputChange = (index, value) => {
-    // Allow only numbers
-    const numericValue = value.replace(/[^0-9]/g, '');
-    
-    const newInputFields = [...inputFields];
-    newInputFields[index] = numericValue;
-    setInputFields(newInputFields);
-    setValidationError('');
-  };
-
-  const validateInputs = () => {
-    // Check for empty fields
-    if (inputFields.some(field => field.trim() === '')) {
-      setValidationError('All fields must be filled.');
-      return false;
-    }
-
-    // Check for non-integer values (should be redundant due to input filtering)
-    if (inputFields.some(field => isNaN(field) || !Number.isInteger(Number(field)))) {
-      setValidationError('Only whole numbers (integers) are allowed.');
-      return false;
-    }
-
-    // Check for duplicates
-    const uniqueValues = new Set(inputFields);
-    if (uniqueValues.size !== inputFields.length) {
-      setValidationError('Duplicate values are not allowed.');
-      return false;
-    }
-
-    return true;
-  };
-
-  const handleRegenerate = async () => {
-    if (!selectedSheet) {
-      alert('Please select a sheet first');
-      return;
-    }
-
-    if (!validateInputs()) {
-      return;
-    }
-
-    setLoading(true);
+  const fetchRows = async (sheet) => {
+    setRowsLoading(true);
+    setSelectedRow('');
     try {
-      for (const row of inputFields.map(Number)) {
-        const response = await fetch('http://localhost:3000/regenerate', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            sheetName: selectedSheet,
-            row: row,
-            regenerate_prompt: regeneratePrompt
-          })
-        });
-
-        const data = await response.json();
-        
-        if (!response.ok) {
-          throw new Error(data.error || `Failed to send row ${row} for regeneration`);
-        }
-      }
-
-      alert(`Successfully sent rows: ${inputFields.join(', ')} for regeneration.`);
-      setShowPopup(true);
-      // Refresh sheet names to show the new sheet
-      fetchSheetNames();
-    } catch (error) {
-      console.error('Error:', error);
-      alert(`Error sending rows for regeneration: ${error.message}`);
+      const response = await fetch(`${API_BASE}/sheet-rows?sheetName=${encodeURIComponent(sheet)}`);
+      const data = await response.json();
+      if (data.success) setRows(data.rows);
+      else throw new Error(data.message);
+    } catch (err) {
+      console.error('Error fetching rows:', err);
+      setRows([]);
+      toast('Could not load rows for this sheet.', 'error');
     } finally {
-      setLoading(false);
+      setRowsLoading(false);
     }
   };
 
-  const closePopup = () => {
-    setShowPopup(false);
+  const current = rows.find((r) => String(r.row) === String(selectedRow));
+
+  const regenerateRows = async (rowNumbers) => {
+    setRegenerating(true);
+    setBusy(true);
+    try {
+      for (const row of rowNumbers) {
+        const response = await fetch(`${API_BASE}/regenerate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sheetName: selectedSheet, row, regenerate_prompt: regeneratePrompt }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || `Failed to regenerate row ${row}`);
+      }
+      const label = rowNumbers.length === 1 ? `row ${rowNumbers[0]}` : `rows ${rowNumbers[0]}–${rowNumbers[rowNumbers.length - 1]}`;
+      toast(`Regenerated ${label}.`, 'success');
+    } catch (err) {
+      console.error('Error:', err);
+      toast(`Error regenerating: ${err.message}`, 'error');
+    } finally {
+      setRegenerating(false);
+      setBusy(false);
+    }
   };
 
-  // Filter sheet names based on search term
-  const filteredSheetNames = sheetNames.filter(name =>
-    name.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const handleRegenerate = () => {
+    setValidationError('');
+    if (!selectedSheet) { toast('Please select a sheet first.', 'error'); return; }
 
-  if (loading && !sheetNames.length) {
+    if (multiMode) {
+      const start = Number(rangeStart);
+      const end = Number(rangeEnd);
+      if (!rangeStart || !rangeEnd) { setValidationError('Enter both a start and end row.'); return; }
+      if (start < 2 || end < 2) { setValidationError('Rows start at 2.'); return; }
+      if (end < start) { setValidationError('End row must be greater than or equal to the start row.'); return; }
+      const nums = [];
+      for (let r = start; r <= end; r++) nums.push(r);
+      regenerateRows(nums);
+    } else {
+      if (!selectedRow) { setValidationError('Select a row first.'); return; }
+      regenerateRows([Number(selectedRow)]);
+    }
+  };
+
+  if (initialLoading) {
     return (
-      <div className="h-full border-l flex-1 flex flex-col p-4 bg-gray-800 text-white">
-        <header className="border-b border-gray-300 p-4">
-          <h1 className="text-2xl font-semibold text-center">Regenerate Questions</h1>
-        </header>
-        <div className="flex-1 flex justify-center items-center">
-          <div className="loader"></div>
-        </div>
-      </div>
+      <Page title="Regenerate Questions" subtitle="Rebuild specific rows you want to replace." connection="regenerate">
+        <div className="flex justify-center pt-16"><Spinner size={28} /></div>
+      </Page>
     );
   }
 
   if (error) {
-    return <div className="text-red-500">{error}</div>;
+    return (
+      <Page title="Regenerate Questions" subtitle="Rebuild specific rows you want to replace." connection="regenerate">
+        <Card className="mx-auto max-w-lg text-center text-rose-400">{error}</Card>
+      </Page>
+    );
   }
 
   return (
-    <div className="h-full border-l flex-1 flex flex-col p-4 bg-gray-800 text-white">
-      <header className="border-b border-gray-300 p-4">
-        <h1 className="text-2xl font-semibold text-center">Regenerate Questions</h1>
-      </header>
+    <Page title="Regenerate Questions" subtitle="Rebuild specific rows you want to replace." connection="regenerate">
+      <Card className="mx-auto max-w-lg">
+        <Field label="Sheet">
+          <ComboboxDemo sheetNames={sheetNames} selectedSheet={selectedSheet} onSheetSelect={setSelectedSheet} />
+        </Field>
 
-      <div className="flex-1 flex flex-col justify-center items-center p-4">
-        <div className="w-full max-w-md mb-8">
-          <label className="block text-sm font-medium mb-2 text-center">
-            Select Sheet:
-          </label>
-          <div className="flex justify-center">
-            <ComboboxDemo 
-              sheetNames={sheetNames}
-              selectedSheet={selectedSheet}
-              onSheetSelect={(sheet) => setSelectedSheet(sheet)}
-            />
-          </div>
-        </div>
+        <label className="mb-5 flex items-center gap-2.5 text-sm font-medium text-slate-300">
+          <input
+            type="checkbox"
+            checked={multiMode}
+            onChange={(e) => { setMultiMode(e.target.checked); setValidationError(''); }}
+            className="h-4 w-4 rounded border-slate-600 bg-slate-800 accent-indigo-500"
+          />
+          Regenerate multiple rows?
+        </label>
 
-        <div className="w-full max-w-md mb-8">
-          <h3 className="text-xl font-medium mb-4 text-center text-blue-400">
-            Enter rows to regenerate
-          </h3>
-          
-          <div id="inputContainer">
-            {inputFields.map((input, index) => (
-              <div key={index} className="input-group flex items-center mb-3">
-                <input
-                  type="text"
-                  value={input}
-                  onChange={(e) => handleInputChange(index, e.target.value)}
-                  className="input-box flex-grow p-2 rounded-lg bg-gray-700 text-white border border-gray-600 focus:border-blue-500 focus:outline-none"
-                  placeholder="Enter an integer"
-                />
-                {inputFields.length > 1 && (
-                  <button
-                    onClick={() => removeInputField(index)}
-                    className="remove-btn bg-red-500 text-white border-none rounded-full w-7 h-7 text-sm ml-2 hover:bg-red-600 transition-colors"
-                  >
-                    ✖
-                  </button>
-                )}
-              </div>
-            ))}
+        {multiMode ? (
+          <Field label="Row range">
+            <div className="flex items-center gap-2">
+              <input
+                type="text" inputMode="numeric" value={rangeStart}
+                onChange={(e) => setRangeStart(e.target.value.replace(/[^0-9]/g, ''))}
+                className={inputClass} placeholder="From (e.g. 2)"
+              />
+              <span className="text-slate-500">–</span>
+              <input
+                type="text" inputMode="numeric" value={rangeEnd}
+                onChange={(e) => setRangeEnd(e.target.value.replace(/[^0-9]/g, ''))}
+                className={inputClass} placeholder="To (e.g. 10)"
+              />
+            </div>
+          </Field>
+        ) : (
+          <Field label="Row">
+            {rowsLoading ? (
+              <div className="flex items-center gap-2 text-sm text-slate-400"><Spinner size={14} /> Loading rows…</div>
+            ) : (
+              <select
+                value={selectedRow}
+                onChange={(e) => { setSelectedRow(e.target.value); setValidationError(''); }}
+                className={inputClass}
+              >
+                <option value="">Select a row…</option>
+                {rows.map((r) => (
+                  <option key={r.row} value={r.row}>
+                    Row {r.row}{r.content ? ` — ${truncate(r.content)}` : ''}
+                  </option>
+                ))}
+              </select>
+            )}
+          </Field>
+        )}
+
+        {!multiMode && current && (
+          <div className="mb-6 space-y-3 rounded-lg border border-slate-800 bg-slate-950/60 p-4">
+            <div className="grid grid-cols-3 gap-3">
+              <Meta label="Passage type" value={current.passageType} />
+              <Meta label="Question type" value={current.questionType} />
+              <Meta label="Difficulty" value={current.difficulty} />
+            </div>
+            <ReadOnly label="Passage" value={current.passage} />
+            <ReadOnly label="Question" value={current.content} />
+            <div className="grid grid-cols-2 gap-3">
+              <Meta label="Choice A" value={current.choiceA} />
+              <Meta label="Choice B" value={current.choiceB} />
+              <Meta label="Choice C" value={current.choiceC} />
+              <Meta label="Choice D" value={current.choiceD} />
+            </div>
+            <Meta label="Correct answer" value={current.answer} />
           </div>
-          
-          {validationError && (
-            <div className="text-red-400 mb-3 text-sm">{validationError}</div>
-          )}
-          
-          <div className="action-buttons flex justify-center mt-4 mb-6">
-            <button
-              onClick={addInputField}
-              className="button bg-blue-500 text-white p-2 rounded-lg hover:bg-blue-600 transition-colors mr-2"
-            >
-              + Add Input
-            </button>
-          </div>
-        </div>
-        
-        <div className="w-full max-w-md mb-8">
-          <label className="block text-sm font-medium mb-2 text-center">
-            Regeneration Prompt:
-          </label>
+        )}
+
+        <Field label="Regeneration prompt">
           <textarea
             value={regeneratePrompt}
             onChange={(e) => setRegeneratePrompt(e.target.value)}
-            className="w-full p-2 rounded-lg bg-gray-700 text-white border border-gray-600 focus:border-green-500 focus:outline-none"
+            className={inputClass}
             rows={4}
-            placeholder="Enter your regeneration prompt here..."
+            placeholder="Optional: describe how to regenerate…"
           />
-        </div>
+        </Field>
 
-        <button
-          onClick={handleRegenerate}
-          disabled={loading}
-          className={`p-4 ${loading ? 'bg-gray-400 cursor-not-allowed' : 'bg-green-500'} text-white rounded-lg text-xl hover:bg-green-600 transition-colors font-bold`}
-        >
-          {loading ? 'Regenerating...' : 'REGENERATE QUESTIONS'}
-        </button>
+        {validationError && <p className="mb-3 text-sm text-rose-400">{validationError}</p>}
 
-        {loading && (
-          <div className="mt-4">
-            <div className="loader"></div>
-          </div>
-        )}
+        <PrimaryButton onClick={handleRegenerate} loading={regenerating} className="w-full">
+          {regenerating ? 'Regenerating…' : 'Regenerate Questions'}
+        </PrimaryButton>
+      </Card>
+    </Page>
+  );
+}
+
+function truncate(text, n = 60) {
+  const s = String(text).replace(/\s+/g, ' ').trim();
+  return s.length > n ? s.slice(0, n) + '…' : s;
+}
+
+function Meta({ label, value }) {
+  return (
+    <div>
+      <div className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</div>
+      <div className="mt-0.5 text-sm text-slate-200">{value || '—'}</div>
+    </div>
+  );
+}
+
+function ReadOnly({ label, value }) {
+  return (
+    <div>
+      <div className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-500">{label}</div>
+      <div className="max-h-40 overflow-auto whitespace-pre-wrap rounded-md border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-200">
+        {value || '—'}
       </div>
-
-      {showPopup && (
-        <div className="fixed bottom-4 right-4 bg-green-500 text-white p-4 rounded-lg shadow-lg flex items-center">
-          <span>Regeneration completed successfully!</span>
-          <button onClick={closePopup} className="ml-4 text-white font-bold">
-            X
-          </button>
-        </div>
-      )}
     </div>
   );
 }
 
 export default Regenerate;
-

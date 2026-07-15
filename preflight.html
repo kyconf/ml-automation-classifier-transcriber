@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Starting up…</title>
+  <style>
+    :root {
+      --bg: #0f1115;
+      --card: #181b22;
+      --text: #e7e9ee;
+      --muted: #9aa0ad;
+      --ok: #34d399;
+      --fail: #f87171;
+      --accent: #6366f1;
+      --accent-hover: #4f52d6;
+      --border: #262a33;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .card {
+      width: 520px; max-width: 92vw;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 32px 36px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.45);
+    }
+    h1 { font-size: 19px; margin: 0 0 4px; font-weight: 600; }
+    .sub { color: var(--muted); font-size: 13px; margin: 0 0 22px; }
+    ul { list-style: none; padding: 0; margin: 0; }
+    li {
+      display: flex; align-items: flex-start; gap: 12px;
+      padding: 11px 0; border-bottom: 1px solid var(--border);
+      opacity: 0; transform: translateY(4px);
+      transition: opacity .35s ease, transform .35s ease;
+    }
+    li.show { opacity: 1; transform: none; }
+    li:last-child { border-bottom: none; }
+    .icon { width: 18px; height: 18px; flex: 0 0 18px; margin-top: 1px; }
+    .label { font-size: 14px; }
+    .detail { font-size: 12px; color: var(--muted); margin-top: 2px; }
+    .spinner {
+      width: 16px; height: 16px; border-radius: 50%;
+      border: 2px solid var(--border); border-top-color: var(--accent);
+      animation: spin .7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .check { color: var(--ok); font-weight: 700; }
+    .cross { color: var(--fail); font-weight: 700; }
+    .status { margin-top: 22px; font-size: 15px; font-weight: 600; min-height: 22px; }
+    .status.ok { color: var(--ok); }
+    .actions { margin-top: 18px; display: flex; flex-direction: column; gap: 12px; }
+    .prompt {
+      background: #1f232c; border: 1px solid var(--border); border-radius: 12px;
+      padding: 14px 16px;
+    }
+    .prompt h2 { font-size: 14px; margin: 0 0 4px; font-weight: 600; }
+    .prompt p { font-size: 12.5px; color: var(--muted); margin: 0 0 10px; }
+    .req { color: var(--fail); font-weight: 600; }
+    button {
+      font: inherit; font-size: 13px; font-weight: 600;
+      background: var(--accent); color: white; border: none;
+      padding: 8px 14px; border-radius: 8px; cursor: pointer;
+      transition: background .15s ease;
+    }
+    button:hover { background: var(--accent-hover); }
+    button.ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
+    button.ghost:hover { background: #20242d; }
+    .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+    .err { color: var(--fail); font-size: 12.5px; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Getting things ready</h1>
+    <p class="sub">Running a quick check before launch.</p>
+    <ul id="steps"></ul>
+    <div class="status" id="status"></div>
+    <div class="actions" id="actions"></div>
+    <div class="err" id="error"></div>
+  </div>
+
+  <script>
+    const { ipcRenderer } = require('electron');
+    const stepsEl = document.getElementById('steps');
+    const statusEl = document.getElementById('status');
+    const actionsEl = document.getElementById('actions');
+    const errorEl = document.getElementById('error');
+
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+    // Pretty labels for addable files.
+    const FILE_LABELS = {
+      '.env': '.env file',
+      'sheets_credentials.json': 'Google Sheets credentials',
+      'drive_credentials.json': 'Google Drive credentials',
+      'drive_token.json': 'Google Drive token',
+    };
+
+    function rowHtml(step, state) {
+      // state: 'checking' | 'ok' | 'fail'
+      const icon = state === 'checking'
+        ? '<div class="spinner"></div>'
+        : state === 'ok'
+          ? '<div class="icon check">✓</div>'
+          : '<div class="icon cross">✕</div>';
+      const detail = state === 'checking' ? '' : `<div class="detail">${step.detail || ''}</div>`;
+      return `${icon}<div><div class="label">${step.label}</div>${detail}</div>`;
+    }
+
+    // First run: reveal each step with a spinner, then resolve it.
+    async function animate(results) {
+      stepsEl.innerHTML = '';
+      for (const step of results.steps) {
+        const li = document.createElement('li');
+        li.innerHTML = rowHtml(step, 'checking');
+        stepsEl.appendChild(li);
+        requestAnimationFrame(() => li.classList.add('show'));
+        await sleep(520);
+        li.innerHTML = rowHtml(step, step.ok ? 'ok' : 'fail');
+      }
+      finish(results);
+    }
+
+    // Re-render instantly (after the user adds a file).
+    function render(results) {
+      stepsEl.innerHTML = '';
+      for (const step of results.steps) {
+        const li = document.createElement('li');
+        li.classList.add('show');
+        li.innerHTML = rowHtml(step, step.ok ? 'ok' : 'fail');
+        stepsEl.appendChild(li);
+      }
+      finish(results);
+    }
+
+    async function finish(results) {
+      actionsEl.innerHTML = '';
+      errorEl.textContent = '';
+
+      if (results.allOk) {
+        statusEl.textContent = 'All good to go!';
+        statusEl.className = 'status ok';
+        await sleep(900);
+        statusEl.textContent = 'Launching…';
+        await ipcRenderer.invoke('preflight:proceed'); // window navigates away
+        return;
+      }
+
+      statusEl.textContent = 'A few things need your attention.';
+      statusEl.className = 'status';
+
+      // Build prompts for the addable, required items.
+      for (const step of results.steps) {
+        if (step.ok || !step.required || !step.missing || !step.missing.length) continue;
+
+        const card = document.createElement('div');
+        card.className = 'prompt';
+
+        if (step.id === 'env') {
+          card.innerHTML = `
+            <h2>Would you like to add the .env?</h2>
+            <p>Your settings file (API key, sheet & folder IDs) is missing or incomplete.</p>
+            <div class="btn-row"><button data-file=".env">Choose .env file</button></div>`;
+        } else if (step.id === 'gcreds') {
+          const buttons = step.missing.map(
+            (name) => `<button data-file="${name}">Choose ${FILE_LABELS[name] || name}</button>`
+          ).join('');
+          card.innerHTML = `
+            <h2>Add your Google credentials <span class="req">(Required)</span></h2>
+            <p>Select each missing file (downloaded from Google Cloud):</p>
+            <div class="btn-row">${buttons}</div>`;
+        }
+        actionsEl.appendChild(card);
+      }
+
+      // Non-addable failures (files / packages): show guidance only.
+      const blocked = results.steps.filter((s) => !s.ok && (s.id === 'files' || s.id === 'packages'));
+      if (blocked.length) {
+        const card = document.createElement('div');
+        card.className = 'prompt';
+        card.innerHTML = `
+          <h2>Setup incomplete</h2>
+          <p>${blocked.map((s) => s.detail).join('<br>')}</p>`;
+        actionsEl.appendChild(card);
+      }
+
+      // Always offer a re-check.
+      const recheck = document.createElement('div');
+      recheck.className = 'btn-row';
+      recheck.innerHTML = '<button class="ghost" id="recheck">Re-check</button>';
+      actionsEl.appendChild(recheck);
+
+      wireButtons();
+    }
+
+    function wireButtons() {
+      document.querySelectorAll('button[data-file]').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          btn.disabled = true;
+          const res = await ipcRenderer.invoke('preflight:addFile', btn.dataset.file);
+          if (res.error) errorEl.textContent = res.error;
+          render(res);
+        });
+      });
+      const recheck = document.getElementById('recheck');
+      if (recheck) {
+        recheck.addEventListener('click', async () => {
+          render(await ipcRenderer.invoke('preflight:run'));
+        });
+      }
+    }
+
+    (async () => {
+      animate(await ipcRenderer.invoke('preflight:run'));
+    })();
+  </script>
+</body>
+</html>

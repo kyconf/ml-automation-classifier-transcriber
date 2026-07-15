@@ -1,17 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import './loader.module.css';
 import { ComboboxDemo } from '@/components/ui/combobox';
+import { API_BASE } from './config';
+import { useApp } from './AppContext';
+import { Page, Card, Field, PrimaryButton, Spinner, inputClass } from './components/Layout';
 
 function Generate() {
   const [sheetNames, setSheetNames] = useState([]);
   const [selectedSheet, setSelectedSheet] = useState('');
-  const [searchTerm, setSearchTerm] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [preview, setPreview] = useState(null);
-  const [transcriptionComplete, setTranscriptionComplete] = useState(false);
-  const [showPopup, setShowPopup] = useState(false);
+  const [generating, setGenerating] = useState(false);
   const [generatePrompt, setGeneratePrompt] = useState('');
+  const { setBusy, toast } = useApp();
 
   useEffect(() => {
     fetchSheetNames();
@@ -19,183 +19,92 @@ function Generate() {
 
   const fetchSheetNames = async () => {
     try {
-      const response = await fetch('http://localhost:3000/sheet-names');
+      const response = await fetch(`${API_BASE}/sheet-names`);
       const data = await response.json();
-      
       if (data.success) {
         setSheetNames(data.sheetNames);
-        if (data.sheetNames.length > 0) {
-          setSelectedSheet(data.sheetNames[0]);
-        }
+        if (data.sheetNames.length > 0) setSelectedSheet(data.sheetNames[0]);
       } else {
         throw new Error(data.message);
       }
-    } catch (error) {
-      console.error('Error fetching sheet names:', error);
-      setError('Failed to load sheet names');
+    } catch (err) {
+      console.error('Error fetching sheet names:', err);
+      setError('Failed to load sheet names. Make sure the server is running.');
     } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleSheetChange = (event) => {
-    setSelectedSheet(event.target.value);
-  };
-
-  const handleTranscribe = async () => {
-    if (!selectedSheet) {
-      alert('Please select a sheet first');
-      return;
-    }
-
-    setLoading(true);
-    try {
-      const response = await fetch('http://localhost:3000/download-sheet', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          sheetName: selectedSheet
-        })
-      });
-
-      const data = await response.json();
-      
-      if (response.ok) {
-        alert(`Successfully downloaded sheet: ${selectedSheet} to Google Drive`);
-        setShowPopup(true);
-      } else {
-        throw new Error(data.error || 'Failed to download sheet');
-      }
-    } catch (error) {
-      console.error('Error:', error);
-      alert(`Error downloading sheet: ${error.message}`);
-    } finally {
-      setLoading(false);
+      setInitialLoading(false);
     }
   };
 
   const handleGenerate = async () => {
     if (!selectedSheet) {
-      alert('Please select a sheet first');
+      toast('Please select a sheet first.', 'error');
       return;
     }
-
-    setLoading(true);
+    setGenerating(true);
+    setBusy(true);
     try {
-      const response = await fetch('http://localhost:3000/generate-questions', {
+      const response = await fetch(`${API_BASE}/generate-questions`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          sheetName: selectedSheet,
-          generate_prompt: generatePrompt
-        })
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sheetName: selectedSheet, generate_prompt: generatePrompt }),
       });
-
       const data = await response.json();
-      
-      if (response.ok) {
-        alert(`Successfully generated questions in new sheet: ${data.newSheetName}`);
-        setShowPopup(true);
-        // Refresh sheet names to show the new sheet
-        fetchSheetNames();
+      if (response.ok && data.success) {
+        toast(`Generated questions in “${selectedSheet}”.`, 'success');
       } else {
-        throw new Error(data.error || 'Failed to generate questions');
+        throw new Error(data.error || data.message || 'Failed to generate questions');
       }
-    } catch (error) {
-      console.error('Error:', error);
-      alert(`Error generating questions: ${error.message}`);
+    } catch (err) {
+      console.error('Error:', err);
+      toast(`Error generating questions: ${err.message}`, 'error');
     } finally {
-      setLoading(false);
+      setGenerating(false);
+      setBusy(false);
     }
   };
 
-  const closePopup = () => {
-    setShowPopup(false);
-  };
-
-  // Filter sheet names based on search term
-  const filteredSheetNames = sheetNames.filter(name =>
-    name.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
-  if (loading && !sheetNames.length) {
+  if (initialLoading) {
     return (
-      <div className="h-full border-l flex-1 flex flex-col p-4 bg-gray-800 text-white">
-        <header className="border-b border-gray-300 p-4">
-          <h1 className="text-2xl font-semibold text-center">Generate Questions</h1>
-        </header>
-        <div className="flex-1 flex justify-center items-center">
-          <div className="loader"></div>
-        </div>
-      </div>
+      <Page title="Generate Questions" subtitle="Create new questions matching a sheet’s style." connection="generate">
+        <div className="flex justify-center pt-16"><Spinner size={28} /></div>
+      </Page>
     );
   }
 
   if (error) {
-    return <div className="text-red-500">{error}</div>;
+    return (
+      <Page title="Generate Questions" subtitle="Create new questions matching a sheet’s style." connection="generate">
+        <Card className="mx-auto max-w-lg text-center text-rose-400">{error}</Card>
+      </Page>
+    );
   }
 
   return (
-    <div className="h-full border-l flex-1 flex flex-col p-4 bg-gray-800 text-white">
-      <header className="border-b border-gray-300 p-4">
-        <h1 className="text-2xl font-semibold text-center">Generate Questions</h1>
-      </header>
+    <Page title="Generate Questions" subtitle="Create new questions matching a sheet’s style and difficulty." connection="generate">
+      <Card className="mx-auto max-w-lg">
+        <Field label="Sheet">
+          <ComboboxDemo
+            sheetNames={sheetNames}
+            selectedSheet={selectedSheet}
+            onSheetSelect={setSelectedSheet}
+          />
+        </Field>
 
-      <div className="flex-1 flex flex-col justify-center items-center p-4">
-        <div className="w-full max-w-md mb-8">
-          <label className="block text-sm font-medium mb-2 text-center">
-            Select Sheet:
-          </label>
-          <div className="flex justify-center">
-            <ComboboxDemo 
-              sheetNames={sheetNames}
-              selectedSheet={selectedSheet}
-              onSheetSelect={(sheet) => setSelectedSheet(sheet)}
-            />
-          </div>
-        </div>
-        
-        <div className="w-full max-w-md mb-8">
-          <label className="block text-sm font-medium mb-2 text-center">
-            Generation Prompt:
-          </label>
+        <Field label="Generation prompt">
           <textarea
             value={generatePrompt}
             onChange={(e) => setGeneratePrompt(e.target.value)}
-            className="w-full p-2 rounded-lg bg-gray-700 text-white border border-gray-600 focus:border-green-500 focus:outline-none"
+            className={inputClass}
             rows={4}
-            placeholder="Enter your generation prompt here..."
+            placeholder="Optional: describe what you want generated…"
           />
-        </div>
+        </Field>
 
-        <button
-          onClick={handleGenerate}
-          disabled={loading}
-          className={`p-4 ${loading ? 'bg-gray-400 cursor-not-allowed' : 'bg-green-500'} text-white rounded-lg text-xl hover:bg-green-600 transition-colors font-bold`}
-        >
-          {loading ? 'Generating...' : 'GENERATE QUESTIONS'}
-        </button>
-
-        {loading && (
-          <div className="mt-4">
-            <div className="loader"></div>
-          </div>
-        )}
-      </div>
-
-      {showPopup && (
-        <div className="fixed bottom-4 right-4 bg-green-500 text-white p-4 rounded-lg shadow-lg flex items-center">
-          <span>Generation completed successfully!</span>
-          <button onClick={closePopup} className="ml-4 text-white font-bold">
-            X
-          </button>
-        </div>
-      )}
-    </div>
+        <PrimaryButton onClick={handleGenerate} loading={generating} className="w-full">
+          {generating ? 'Generating…' : 'Generate Questions'}
+        </PrimaryButton>
+      </Card>
+    </Page>
   );
 }
 

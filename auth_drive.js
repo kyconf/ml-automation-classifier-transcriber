@@ -26,7 +26,19 @@ const authUrl = oauth2Client.generateAuthUrl({
 });
 
 console.log('🌐 Opening browser for Google Drive authorization...');
-exec(`open "${authUrl}"`);
+function openBrowser(url) {
+  const cmd = process.platform === 'win32'
+    ? `start "" "${url}"`
+    : process.platform === 'darwin'
+      ? `open "${url}"`
+      : `xdg-open "${url}"`;
+  exec(cmd, (err) => {
+    if (err) {
+      console.log('Could not open a browser automatically. Visit this URL manually:\n', url);
+    }
+  });
+}
+openBrowser(authUrl);
 
 const server = http.createServer(async (req, res) => {
   try {

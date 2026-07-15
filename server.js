@@ -16,9 +16,19 @@ const execAsync = promisify(exec);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-if (process.env.NODE_ENV !== 'production') {
-    dotenv.config({ path: path.join(__dirname, '.env') });
+// Load .env from the path resolved by Electron (APP_ENV_PATH) when launched by the
+// app, or from the local directory when run standalone (e.g. `npm run server`).
+dotenv.config({ path: process.env.APP_ENV_PATH || path.join(__dirname, '.env') });
+
+// Resolve a config/credential file from the writable app-data dir (where the
+// preflight screen saves user-added files) first, then the local directory.
+function resolveConfigFile(name) {
+  for (const dir of [process.env.APP_DATA_DIR, __dirname].filter(Boolean)) {
+    const p = path.join(dir, name);
+    if (fs.existsSync(p)) return p;
   }
+  return path.join(__dirname, name);
+}
 
 const app = express();
 app.use(cors()); // Enables CORS for all origins
@@ -32,7 +42,7 @@ const range = 'Question!A1';
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 // Google Sheets API setup
-const SERVICE_ACCOUNT_FILE = path.join(__dirname, 'sheets_credentials.json'); // Path to your service account key file
+const SERVICE_ACCOUNT_FILE = resolveConfigFile('sheets_credentials.json'); // Path to your service account key file
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID; // Replace with your spreadsheet ID
 
 const EXPORT_FOLDER_ID = process.env.EXPORT_FOLDER_ID;
@@ -44,8 +54,13 @@ const auth = new google.auth.GoogleAuth({
 });
 const sheets = google.sheets({ version: 'v4', auth });
 
-const DRIVE_CREDENTIALS_PATH = path.join(__dirname, 'drive_credentials.json');
-const DRIVE_TOKEN_PATH = path.join(__dirname, 'drive_token.json');
+const DRIVE_CREDENTIALS_PATH = resolveConfigFile('drive_credentials.json');
+const DRIVE_TOKEN_PATH = resolveConfigFile('drive_token.json');
+// Refreshed tokens are written to a writable location (app-data when packaged,
+// since the bundled copy may be read-only).
+const DRIVE_TOKEN_WRITE_PATH = process.env.APP_DATA_DIR
+  ? path.join(process.env.APP_DATA_DIR, 'drive_token.json')
+  : DRIVE_TOKEN_PATH;
 
 function getDriveOAuth2Client() {
   if (!fs.existsSync(DRIVE_TOKEN_PATH)) {
@@ -58,9 +73,13 @@ function getDriveOAuth2Client() {
   oauth2Client.setCredentials(token);
   // Auto-save refreshed tokens
   oauth2Client.on('tokens', (tokens) => {
-    const existing = JSON.parse(fs.readFileSync(DRIVE_TOKEN_PATH));
-    fs.writeFileSync(DRIVE_TOKEN_PATH, JSON.stringify({ ...existing, ...tokens }, null, 2));
-    console.log('🔄 Drive token refreshed and saved.');
+    try {
+      const existing = JSON.parse(fs.readFileSync(DRIVE_TOKEN_PATH));
+      fs.writeFileSync(DRIVE_TOKEN_WRITE_PATH, JSON.stringify({ ...existing, ...tokens }, null, 2));
+      console.log('🔄 Drive token refreshed and saved.');
+    } catch (err) {
+      console.error('⚠️ Could not save refreshed Drive token:', err.message);
+    }
   });
   return oauth2Client;
 }
@@ -70,10 +89,14 @@ const drive = google.drive({ version: 'v3', auth: getDriveOAuth2Client() });
 const FOLDER_ID = process.env.FOLDER_ID;
 const FOLDER_PDF = process.env.FOLDER_PDF;
 
-// Define a persistent output directory
+// Define a persistent output directory. Prefer the app-data dir Electron passes
+// (guaranteed writable, cross-platform); fall back to the OS home/appdata.
 const isPackaged = process.env.ELECTRON_IS_PACKAGED === 'true';
 const OUTPUT_DIR = isPackaged
-  ? path.join(process.env.APPDATA || process.env.HOME, "pdf-transcriber", "converted_images")
+  ? path.join(
+      process.env.APP_DATA_DIR || path.join(process.env.APPDATA || process.env.HOME || __dirname, "pdf-transcriber"),
+      "converted_images"
+    )
   : path.resolve("converted_images");
 
 // Create output directory if it doesn't exist
@@ -667,14 +690,61 @@ async function clearProcessingQueue() {
   }
 }
 
+// Resolve the pdftocairo (poppler) binary in a cross-platform way.
+// Precedence: POPPLER_PATH env > bundled vendor binary > common system paths > PATH.
+function resolvePdftocairo() {
+  const binName = process.platform === 'win32' ? 'pdftocairo.exe' : 'pdftocairo';
+
+  // 1. Explicit override
+  if (process.env.POPPLER_PATH) {
+    const p = path.join(process.env.POPPLER_PATH, binName);
+    if (fs.existsSync(p)) return p;
+  }
+
+  // 2. Optional vendor override (vendor/poppler/<platform>-<arch>/bin/<bin>) —
+  // drop a native/newer binary here to take precedence over the npm-bundled one.
+  const platformDir = `${process.platform}-${process.arch}`;
+  const baseDirs = isPackaged
+    ? [path.join(process.resourcesPath || __dirname, 'vendor', 'poppler')]
+    : [path.join(__dirname, 'vendor', 'poppler')];
+  for (const base of baseDirs) {
+    const p = path.join(base, platformDir, 'bin', binName);
+    if (fs.existsSync(p)) return p;
+  }
+
+  // 3. Binaries shipped inside the pdf-poppler npm package (bundled automatically
+  // by electron-builder). Works out of the box, no manual download needed.
+  const pdfPopplerBins = process.platform === 'win32'
+    ? [path.join(__dirname, 'node_modules', 'pdf-poppler', 'lib', 'win', 'poppler-0.51', 'bin', binName)]
+    : [
+        path.join(__dirname, 'node_modules', 'pdf-poppler', 'lib', 'osx', 'poppler-0.66', 'bin', binName),
+        path.join(__dirname, 'node_modules', 'pdf-poppler', 'lib', 'osx', 'poppler-0.62', 'bin', binName),
+      ];
+  for (const p of pdfPopplerBins) {
+    if (fs.existsSync(p)) return p;
+  }
+
+  // 4. Common system install locations
+  const commonPaths = process.platform === 'win32'
+    ? ['C:\\Program Files\\poppler\\Library\\bin', 'C:\\poppler\\Library\\bin']
+    : ['/opt/homebrew/bin', '/usr/local/bin', '/usr/bin'];
+  for (const dir of commonPaths) {
+    const p = path.join(dir, binName);
+    if (fs.existsSync(p)) return p;
+  }
+
+  // 5. Last resort: rely on PATH
+  console.warn('⚠️ pdftocairo not found in vendor/ or common paths; falling back to PATH.');
+  return binName;
+}
+
 // Convert PDF to Images
 async function convertPdfToImages(pdfPath, outputDir) {
   if (!fs.existsSync(outputDir)) {
     fs.mkdirSync(outputDir, { recursive: true });
   }
 
-  // Use the ARM homebrew pdftocairo instead of the bundled x86_64 binary
-  const pdftocairo = '/opt/homebrew/bin/pdftocairo';
+  const pdftocairo = resolvePdftocairo();
   const outPrefix = path.join(outputDir, 'page');
   const cmd = `"${pdftocairo}" -png -r 150 "${pdfPath}" "${outPrefix}"`;
 
@@ -1026,7 +1096,10 @@ async function exportSheetToXLSX(spreadsheetId, sheetName, destinationPath) {
       // Convert the data to an XLSX format
       const worksheet = XLSX.utils.aoa_to_sheet(rows);
       const workbook = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+      // Excel worksheet names can't contain : \ / ? * [ ] — the Google Sheets
+      // tab name may, so sanitize just for this local XLSX export.
+      const xlsxSheetName = sheetName.replace(/[:\\/?*[\]]/g, '_').slice(0, 31);
+      XLSX.utils.book_append_sheet(workbook, worksheet, xlsxSheetName);
 
       // Save to an XLSX file
       XLSX.writeFile(workbook, destinationPath);
@@ -1328,8 +1401,8 @@ app.post('/generate-questions', async (req, res) => {
         const generatedQuestion = JSON.parse(cleanedContent);
         console.log('Parsed Question:', generatedQuestion);
 
-        // Append the generated question starting from column H
-        const targetRange = `${sheetName}!H${processedRows + 1}`;
+        // Append the generated question starting from column N
+        const targetRange = `${sheetName}!N${processedRows + 1}`;
         await sheets.spreadsheets.values.update({
           spreadsheetId: SPREADSHEET_ID,
           range: targetRange,
@@ -1373,10 +1446,12 @@ app.post('/regenerate', async (req, res) => {
       });
     }
 
-    // Read the original sheet data
+    // Read the row's current question (the content to regenerate) plus its metadata.
+    // Columns: D=passage, E=content, F=choice_A, G=choice_B, H=choice_C, I=choice_D,
+    // J=correct_answer, K=passage_type, L=question_type, M=question_difficulty.
     const response = await sheets.spreadsheets.get({
       spreadsheetId: SPREADSHEET_ID,
-      ranges: [`${sheetName}!B${row}:G${row}`],
+      ranges: [`${sheetName}!D${row}:M${row}`],
       fields: 'sheets.data.rowData.values(effectiveFormat.textFormat,formattedValue)'
     });
 
@@ -1386,13 +1461,17 @@ app.post('/regenerate', async (req, res) => {
 
     // Get formatted text
     const passage = convertFormattingToMarkup(cells[0]);
-    const question = convertFormattingToMarkup(cells[1]);
-    const answer = cells[2]?.formattedValue || '';
-    const passageType = convertFormattingToMarkup(cells[3]);
-    const questionType = convertFormattingToMarkup(cells[4]);
-    const difficultyLevel = convertFormattingToMarkup(cells[5]);
+    const content = convertFormattingToMarkup(cells[1]);
+    const choiceA = convertFormattingToMarkup(cells[2]);
+    const choiceB = convertFormattingToMarkup(cells[3]);
+    const choiceC = convertFormattingToMarkup(cells[4]);
+    const choiceD = convertFormattingToMarkup(cells[5]);
+    const answer = cells[6]?.formattedValue || '';
+    const passageType = convertFormattingToMarkup(cells[7]);
+    const questionType = convertFormattingToMarkup(cells[8]);
+    const difficultyLevel = convertFormattingToMarkup(cells[9]);
 
-    console.log("Formatted values", passage, question, answer, passageType, questionType, difficultyLevel);
+    console.log("Formatted values", passage, content, choiceA, choiceB, choiceC, choiceD, answer, passageType, questionType, difficultyLevel);
     console.log(`\n🔄 Processing Sheet: ${sheetName} | Row: ${row}`);
 
     const completion = await openai.chat.completions.create({
@@ -1400,11 +1479,11 @@ app.post('/regenerate', async (req, res) => {
       messages: [
         {
           role: "system",
-          content: `You are an expert SAT question generator. Your task is to create new, engaging questions that match the style and difficulty of the SAT.\n\nKey requirements for your responses:\n1. Use appropriate formatting to enhance readability and emphasis:\n   - Bold (**text**) ONLY when you think it is necessary.\n   - Italics (*text*) ONLY for titles of works, foreign words, or emphasis\n   - Underline ({text}) ONLY when the question asks for it, e.g. "What is the purpose of the underlined section?"\n   - Quotes ("text") for direct quotations\n2. Use proper line breaks:\n   - \\n for single line breaks\n   - \\n\\n for paragraph breaks\n3. If the question involves a graph or visual element, start with %GRAPH%\n4. Maintain consistent difficulty level and question type\n5. Ensure historical/scientific accuracy\n6. Create clear, unambiguous answer choices\n7. A question cannot be formatted twice, e.g. _**text**_ is invalid.\n\nReturn ONLY in this JSON format:\n{\n  "passage": "[formatted passage]",\n  "question": "[formatted question]\\n\\nA) [Option A]\\nB) [Option B]\\nC) [Option C]\\nD) [Option D]\\n\\n",\n  "correct_answer": "[Letter]"\n}`
+          content: `You are an expert SAT question generator. Your task is to create new, engaging questions that match the style and difficulty of the SAT.\n\nKey requirements for your responses:\n1. Use appropriate formatting to enhance readability and emphasis:\n   - Bold (**text**) ONLY when you think it is necessary.\n   - Italics (*text*) ONLY for titles of works, foreign words, or emphasis\n   - Underline ({text}) ONLY when the question asks for it, e.g. "What is the purpose of the underlined section?"\n   - Quotes ("text") for direct quotations\n2. Use proper line breaks:\n   - \\n for single line breaks\n   - \\n\\n for paragraph breaks\n3. If the question involves a graph or visual element, start with %GRAPH%\n4. Maintain consistent difficulty level and question type\n5. Ensure historical/scientific accuracy\n6. Create clear, unambiguous answer choices\n7. A question cannot be formatted twice, e.g. _**text**_ is invalid.\n\nReturn ONLY in this JSON format, with each answer choice as its own field (no letter prefixes inside the choices):\n{\n  "passage": "[formatted passage]",\n  "content": "[formatted question stem]",\n  "choice_A": "[Option A]",\n  "choice_B": "[Option B]",\n  "choice_C": "[Option C]",\n  "choice_D": "[Option D]",\n  "correct_answer": "[Letter]"\n}`
         },
         {
           role: "user",
-          content: regenerate_prompt || "Generate a new question following the system instructions."
+          content: `Generate a NEW question that is a variant of the original below — same passage type, question type, and difficulty, but with different content (new passage, new question, new answer choices). Do not copy the original.\n\nPassage type: ${passageType || 'N/A'}\nQuestion type: ${questionType || 'N/A'}\nDifficulty: ${difficultyLevel || 'N/A'}\n\nOriginal passage:\n${passage || 'N/A'}\n\nOriginal question:\n${content || 'N/A'}\n\nOriginal choices:\nA) ${choiceA || 'N/A'}\nB) ${choiceB || 'N/A'}\nC) ${choiceC || 'N/A'}\nD) ${choiceD || 'N/A'}\n\nOriginal correct answer: ${answer || 'N/A'}${regenerate_prompt ? `\n\nAdditional instructions: ${regenerate_prompt}` : ''}`
         }
       ],
     });
@@ -1415,14 +1494,23 @@ app.post('/regenerate', async (req, res) => {
     const cleanedContent = cleanJsonResponse(generatedContent);
     const generatedQuestion = JSON.parse(cleanedContent);
 
-    // Append the generated question starting from column H
-    const targetRange = `${sheetName}!H${row}`;
+    // Overwrite the question in place: D=passage, E=content, F–I=choices, J=correct_answer.
+    // Metadata (K–M) is left intact.
+    const targetRange = `${sheetName}!D${row}:J${row}`;
     await sheets.spreadsheets.values.update({
       spreadsheetId: SPREADSHEET_ID,
       range: targetRange,
       valueInputOption: 'RAW',
       resource: {
-        values: [[generatedQuestion.passage, generatedQuestion.question, generatedQuestion.correct_answer]]
+        values: [[
+          generatedQuestion.passage,
+          generatedQuestion.content,
+          generatedQuestion.choice_A,
+          generatedQuestion.choice_B,
+          generatedQuestion.choice_C,
+          generatedQuestion.choice_D,
+          generatedQuestion.correct_answer,
+        ]]
       }
     });
 
@@ -1444,17 +1532,98 @@ app.post('/regenerate', async (req, res) => {
   }
 });
 
-const PORT = process.env.PORT || 3000; 
+// Try to resolve a Drive folder's display name. Returns null if the lookup fails
+// (e.g. permissions) — the ID is what actually determines "connected".
+async function driveName(fileId) {
+  if (!fileId) return null;
+  try {
+    const res = await drive.files.get({ fileId, fields: 'name', supportsAllDrives: true });
+    return res.data.name || null;
+  } catch (err) {
+    console.error(`⚠️ Could not resolve folder name for ${fileId}:`, err.message);
+    return null;
+  }
+}
 
+async function spreadsheetName() {
+  if (!SPREADSHEET_ID) return null;
+  try {
+    const res = await sheets.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID, fields: 'properties.title' });
+    return res.data.properties?.title || null;
+  } catch (err) {
+    console.error(`⚠️ Could not resolve spreadsheet name for ${SPREADSHEET_ID}:`, err.message);
+    return null;
+  }
+}
+
+// Connection is determined by whether the ID is configured (same as the
+// spreadsheet). Show the resolved name when available, otherwise fall back to the
+// ID; null only when no ID is set, so the UI shows "Not connected to any folder".
+app.get('/connection-info', async (req, res) => {
+  const [imageName, pdfName, sheetTitle] = await Promise.all([
+    driveName(FOLDER_ID),
+    driveName(FOLDER_PDF),
+    spreadsheetName(),
+  ]);
+  const label = (name, id) => (id ? (name || id) : null);
+  const spreadsheet = label(sheetTitle, SPREADSHEET_ID);
+  res.json({
+    image: label(imageName, FOLDER_ID),
+    pdf: label(pdfName, FOLDER_PDF),
+    generate: spreadsheet,
+    regenerate: spreadsheet,
+  });
+});
+
+// Return every data row's content for the Regenerate row picker.
+// Columns: D=passage, E=content, F–I=choice_A–D, J=correct_answer,
+// K=passage_type, L=question_type, M=question_difficulty.
+// Row numbers are 1-based and start at 2 (row 1 is the header).
+app.get('/sheet-rows', async (req, res) => {
+  try {
+    const { sheetName } = req.query;
+    if (!sheetName) {
+      return res.status(400).json({ success: false, message: 'sheetName is required' });
+    }
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${sheetName}!D2:M`,
+    });
+    const rows = (response.data.values || [])
+      .map((r, i) => ({
+        row: i + 2,
+        passage: r[0] || '',
+        content: r[1] || '',
+        choiceA: r[2] || '',
+        choiceB: r[3] || '',
+        choiceC: r[4] || '',
+        choiceD: r[5] || '',
+        answer: r[6] || '',
+        passageType: r[7] || '',
+        questionType: r[8] || '',
+        difficulty: r[9] || '',
+      }))
+      .filter((x) => x.passage || x.content || x.answer);
+    res.json({ success: true, rows });
+  } catch (error) {
+    console.error('Error reading sheet rows:', error);
+    res.status(500).json({ success: false, message: 'Failed to read sheet rows', error: error.message });
+  }
+});
+
+const PORT = Number(process.env.PORT) || 3000;
+
+// The UI (API_BASE) and the Electron launcher both expect the server on PORT, so
+// fail clearly if it's taken rather than silently binding a different port.
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 }).on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
-    console.log(`Port ${PORT} is busy, trying ${PORT + 1}...`);
-    app.listen(PORT + 1);
+    console.error(`❌ Port ${PORT} is already in use. Close whatever is using it (or set PORT) and relaunch.`);
   } else {
     console.error('Server error:', err);
   }
+  process.exit(1);
 });
 
 // Add this function to generate a unique filename
