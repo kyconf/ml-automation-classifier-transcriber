@@ -15,12 +15,24 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
     Write-Host "Node.js not found. Install it, then re-run." -ForegroundColor Red
     exit 1
 }
-$pybin = "python"
-if (-not (Get-Command $pybin -ErrorAction SilentlyContinue)) {
-    Write-Host "Python not found. Install Python 3.11, then re-run." -ForegroundColor Red
+$pybin = $null
+if (Get-Command py -ErrorAction SilentlyContinue) {
+    if (& py -3.11 --version 2>$null) { $pybin = "py -3.11" }
+}
+if (-not $pybin -and (Get-Command python3.11 -ErrorAction SilentlyContinue)) { $pybin = "python3.11" }
+if (-not $pybin -and (Get-Command python -ErrorAction SilentlyContinue)) {
+    $verOutput = & python --version 2>&1
+    if ($verOutput -notmatch "3\.11") {
+        Write-Host "Only found $verOutput on PATH — Python 3.11 is required (older/newer patch versions have known PyInstaller-breaking bugs). Install Python 3.11.9, then re-run." -ForegroundColor Red
+        exit 1
+    }
+    $pybin = "python"
+}
+if (-not $pybin) {
+    Write-Host "Python 3.11 not found. Install it (e.g. https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe), then re-run." -ForegroundColor Red
     exit 1
 }
-Write-Host "    Using Python: $(& $pybin --version)"
+Write-Host "    Using Python: $(Invoke-Expression "$pybin --version")"
 
 # The classifier bundles project_backup/fine_tuned_model — this folder is
 # gitignored (too large for git), so it must already be present locally
@@ -31,7 +43,7 @@ if (-not (Test-Path "project_backup/fine_tuned_model")) {
 }
 
 Write-Host "==> [2/5] Creating a Python build environment and installing deps..." -ForegroundColor Cyan
-& $pybin -m venv .buildvenv
+Invoke-Expression "$pybin -m venv .buildvenv"
 & .\.buildvenv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 pip install -r requirements.txt
