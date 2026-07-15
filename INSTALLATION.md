@@ -20,6 +20,9 @@ Save these somewhere easy to find, like your Desktop. You'll enter them once, in
 
 ## macOS
 
+### 0. Make sure you have the right `.dmg` for your Mac
+There are two versions — one for **Apple Silicon** Macs (M1/M2/M3/M4) and one for **Intel** Macs. They are *not* interchangeable; the wrong one won't open. Not sure which you have? Click the  menu → **About This Mac** — it'll say "Apple M‑something" (Apple Silicon) or "Intel" right there. Ask the owner for the matching `.dmg` if you're not sure which one you were given.
+
 ### 1. Open the installer
 Double‑click the **`.dmg`** file you were given (e.g. `pdf-transcriber-…​.dmg`). A window opens showing the app.
 
@@ -80,6 +83,9 @@ Right‑click the app → **Open** → **Open**, or run `xattr -cr "/Application
 
 **Windows: "Windows protected your PC."**
 Click **More info → Run anyway**. This appears because the installer isn't from the Microsoft Store; it's safe to proceed.
+
+**macOS: the app icon just bounces once in the dock, then disappears (no error, no window).**
+You likely have the wrong chip version — an Apple Silicon `.dmg` on an Intel Mac, or vice versa. Check the  menu → **About This Mac** and ask the owner for the matching one (see step 0 above).
 
 **A tab says "Not connected to any folder."**
 Open **⚙ Settings → Advanced** and make sure the Spreadsheet/Folder IDs are filled in, then **Save & restart**.
