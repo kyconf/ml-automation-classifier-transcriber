@@ -845,6 +845,7 @@ async function listPdfFilesInFolder(folderId) {
 }
 
 async function processPdfAndUpload() {
+  const failures = [];
   try {
     await clearProcessingQueue();
 
@@ -860,14 +861,19 @@ async function processPdfAndUpload() {
 
       const pdfFilePath = await downloadPdfFromDrive(pdfFile.id);
       const images = await convertPdfToImages(pdfFilePath, OUTPUT_DIR);
-    
+
     for (const image of images) {
       await uploadFileToDrive(image);
     }
 
       console.log(`✅ All images from ${pdfFile.name} uploaded to Google Drive.`);
 
-      await transcribeImages(images, newSheetName);
+      const responses = await transcribeImages(images, newSheetName);
+      for (const r of responses) {
+        if (r.error) {
+          failures.push({ sheet: newSheetName, image: r.image, error: r.error });
+        }
+      }
     }
 
     await listFilesInFolder(FOLDER_PDF);
@@ -875,6 +881,7 @@ async function processPdfAndUpload() {
     // Throw the error to be caught by the endpoint
     throw error;
   }
+  return failures;
 }
 
 // Function to transcribe images
@@ -1006,11 +1013,19 @@ async function getFileIdFromDrive(fileName) {
 
 app.post('/process-pdf', async (req, res) => {
   try {
-    await processPdfAndUpload();
-    res.status(200).json({
-    success: true,  
-      message: 'All PDFs have been processed successfully.',
-  });
+    const failures = await processPdfAndUpload();
+    if (failures.length > 0) {
+      res.status(200).json({
+        success: false,
+        message: `Processed with ${failures.length} image(s) failing to transcribe. See details.`,
+        failures,
+      });
+    } else {
+      res.status(200).json({
+        success: true,
+        message: 'All PDFs have been processed successfully.',
+      });
+    }
 } catch (error) {
     console.error('Error processing PDFs:', error);
     res.status(500).json({

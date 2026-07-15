@@ -162,11 +162,27 @@ function startServers() {
     ...(envFile ? { APP_ENV_PATH: envFile } : {}),
   };
 
+  // In dev, inherit the existing terminal so logs show up where you launched
+  // `npm run electron-dev` from. In a packaged build, `inherit` has no real
+  // console to attach to — on Windows this makes the OS pop up a *new*,
+  // uncaptured console window for any console-subsystem child (like the
+  // PyInstaller classifier, built with console=True). Redirect to log files
+  // instead: no stray window, and the logs actually persist.
+  let nodeStdio = 'inherit';
+  let pythonStdio = 'inherit';
+  if (!isDev) {
+    const logDir = path.join(appDataDir(), 'logs');
+    fs.mkdirSync(logDir, { recursive: true });
+    nodeStdio = ['ignore', fs.openSync(path.join(logDir, 'server.log'), 'a'), fs.openSync(path.join(logDir, 'server.log'), 'a')];
+    pythonStdio = ['ignore', fs.openSync(path.join(logDir, 'classifier.log'), 'a'), fs.openSync(path.join(logDir, 'classifier.log'), 'a')];
+  }
+
   // Managed child processes — no external terminal window, reliable cleanup.
   nodeServer = spawn(process.execPath, [serverPath], {
     cwd: __dirname,
     env: { ...childEnv, ELECTRON_RUN_AS_NODE: '1' },
-    stdio: 'inherit',
+    stdio: nodeStdio,
+    windowsHide: true,
   });
   nodeServer.on('error', (err) => console.error('Failed to start Node server:', err));
 
@@ -174,9 +190,9 @@ function startServers() {
   // system Python running app.py in dev or if the binary isn't present.
   const classifier = bundledClassifierPath();
   if (classifier) {
-    pythonServer = spawn(classifier, [], { cwd: __dirname, env: childEnv, stdio: 'inherit' });
+    pythonServer = spawn(classifier, [], { cwd: __dirname, env: childEnv, stdio: pythonStdio, windowsHide: true });
   } else {
-    pythonServer = spawn(pythonCmd, [pythonPath], { cwd: __dirname, env: childEnv, stdio: 'inherit' });
+    pythonServer = spawn(pythonCmd, [pythonPath], { cwd: __dirname, env: childEnv, stdio: pythonStdio, windowsHide: true });
   }
   pythonServer.on('error', (err) => console.error('Failed to start Python classifier:', err));
 }
