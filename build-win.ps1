@@ -6,31 +6,68 @@
 # electron.js already falls back to the copy bundled inside
 # node_modules/pdf-poppler/lib/win/poppler-0.51/bin if vendor/poppler/win32-x64
 # is empty.
+#
+# This script will install Node.js and Python 3.11 itself if they're missing,
+# same as wininstall.ps1 does - you shouldn't need anything preinstalled to
+# run this.
 
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
+function Find-Python311 {
+    # Run version checks with errors treated as non-fatal - native exe stderr
+    # output (e.g. py.exe's "no suitable runtime" message) would otherwise
+    # trip $ErrorActionPreference = "Stop" even when redirected.
+    $prevPref = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $found = $null
+    try {
+        if (Get-Command py -ErrorAction SilentlyContinue) {
+            $out = & py -3.11 --version 2>&1
+            if ($LASTEXITCODE -eq 0) { $found = "py -3.11" }
+        }
+        if (-not $found -and (Get-Command python3.11 -ErrorAction SilentlyContinue)) {
+            $out = & python3.11 --version 2>&1
+            if ($LASTEXITCODE -eq 0) { $found = "python3.11" }
+        }
+        if (-not $found -and (Get-Command python -ErrorAction SilentlyContinue)) {
+            $out = & python --version 2>&1
+            if ($LASTEXITCODE -eq 0 -and "$out" -match "3\.11") { $found = "python" }
+        }
+    } finally {
+        $ErrorActionPreference = $prevPref
+    }
+    return $found
+}
+
 Write-Host "==> [1/5] Checking prerequisites (Node, Python)..." -ForegroundColor Cyan
+
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-    Write-Host "Node.js not found. Install it, then re-run." -ForegroundColor Red
-    exit 1
-}
-$pybin = $null
-if (Get-Command py -ErrorAction SilentlyContinue) {
-    if (& py -3.11 --version 2>$null) { $pybin = "py -3.11" }
-}
-if (-not $pybin -and (Get-Command python3.11 -ErrorAction SilentlyContinue)) { $pybin = "python3.11" }
-if (-not $pybin -and (Get-Command python -ErrorAction SilentlyContinue)) {
-    $verOutput = & python --version 2>&1
-    if ($verOutput -notmatch "3\.11") {
-        Write-Host "Only found $verOutput on PATH. Python 3.11 is required (older/newer patch versions have known PyInstaller-breaking bugs). Install Python 3.11.9, then re-run." -ForegroundColor Red
+    Write-Host "    Node.js not found. Installing..." -ForegroundColor Yellow
+    Invoke-WebRequest -Uri "https://nodejs.org/dist/v20.18.1/node-v20.18.1-x64.msi" -OutFile "$env:TEMP\node-installer.msi"
+    Start-Process -FilePath "msiexec.exe" -ArgumentList "/i `"$env:TEMP\node-installer.msi`" /quiet /norestart" -Wait
+    Remove-Item "$env:TEMP\node-installer.msi" -Force
+    $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+    if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+        Write-Host "Node install finished but 'node' still isn't on PATH. Open a new terminal and re-run." -ForegroundColor Red
         exit 1
     }
-    $pybin = "python"
+    Write-Host "    Node.js installed." -ForegroundColor Green
 }
+
+$pybin = Find-Python311
 if (-not $pybin) {
-    Write-Host "Python 3.11 not found. Install it (e.g. https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe), then re-run." -ForegroundColor Red
-    exit 1
+    Write-Host "    Python 3.11 not found. Installing 3.11.9..." -ForegroundColor Yellow
+    Invoke-WebRequest -Uri "https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe" -OutFile "$env:TEMP\python-installer.exe"
+    Start-Process -FilePath "$env:TEMP\python-installer.exe" -ArgumentList "/quiet InstallAllUsers=1 PrependPath=1" -Wait
+    Remove-Item "$env:TEMP\python-installer.exe" -Force
+    $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+    $pybin = Find-Python311
+    if (-not $pybin) {
+        Write-Host "Python 3.11 install finished but couldn't be found on PATH. Open a new terminal and re-run." -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "    Python 3.11 installed." -ForegroundColor Green
 }
 Write-Host "    Using Python: $(Invoke-Expression "$pybin --version")"
 
@@ -43,6 +80,7 @@ if (-not (Test-Path "project_backup/fine_tuned_model")) {
 }
 
 Write-Host "==> [2/5] Creating a Python build environment and installing deps..." -ForegroundColor Cyan
+Remove-Item -Recurse -Force .buildvenv -ErrorAction SilentlyContinue
 Invoke-Expression "$pybin -m venv .buildvenv"
 & .\.buildvenv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
