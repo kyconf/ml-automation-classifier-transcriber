@@ -95,10 +95,12 @@
     ],
     "mac": {
       "target": "dmg",
-      "identity": null
+      "identity": null,
+      "icon": "assets/icon.icns"
     },
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "assets/icon.ico"
     },
     "nsis": {
       "oneClick": false,

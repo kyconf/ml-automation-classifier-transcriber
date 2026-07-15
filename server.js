@@ -1386,7 +1386,7 @@ app.post('/generate-questions', async (req, res) => {
             },
             {
               role: "user",
-              content: generate_prompt || "Generate a new question following the system instructions."
+              content: `Generate a NEW question that is a variant of the original below — same passage type, question type, and difficulty, but with different content (new passage, new question, new answer choices). Do not copy the original.\n\nPassage type: ${passageType || 'N/A'}\nQuestion type: ${questionType || 'N/A'}\nDifficulty: ${difficultyLevel || 'N/A'}\n\nOriginal passage:\n${passage || 'N/A'}\n\nOriginal question:\n${question || 'N/A'}\n\nOriginal correct answer: ${answer || 'N/A'}${generate_prompt ? `\n\nAdditional instructions: ${generate_prompt}` : ''}`
             }
           ],
         });

@@ -209,10 +209,15 @@ function loadMainApp() {
   }
 }
 
+// App icon for dev (Windows/Linux window + macOS Dock). In a packaged build the
+// icon is embedded from the .icns/.ico by electron-builder, so this is a no-op there.
+const APP_ICON = path.join(__dirname, 'assets', 'icon.png');
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1024,
     height: 768,
+    icon: fs.existsSync(APP_ICON) ? APP_ICON : undefined,
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,
@@ -337,7 +342,16 @@ ipcMain.handle('settings:relaunch', async () => {
 
 // ---- Lifecycle --------------------------------------------------------------
 
-app.whenReady().then(createWindow);
+// Friendlier name than "Electron" in the dev menu bar / About panel.
+app.setName('Exam Transcriber');
+
+app.whenReady().then(() => {
+  // Show the logo on the macOS Dock during dev (packaged builds use the .icns).
+  if (process.platform === 'darwin' && app.dock && fs.existsSync(APP_ICON)) {
+    try { app.dock.setIcon(APP_ICON); } catch { /* non-fatal */ }
+  }
+  createWindow();
+});
 
 // Kill the spawned servers, then leave. Guarded so the multiple exit paths
 // (window close, app quit, terminal signal) don't double-run it.
