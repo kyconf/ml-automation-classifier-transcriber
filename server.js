@@ -363,20 +363,24 @@ async function createDefault(spreadsheetId) {
   }
 }
 
-async function appendToSheet(values, sheetName) {
+// Next free row, found by counting how far column C is filled.
+async function getNextRow(sheetName) {
+  const colCheck = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${sheetName}!C:C`,
+  });
+  const existingRows = colCheck.data.values || [];
+  return Math.max(2, existingRows.length + 1);
+}
+
+async function appendToSheet(values, sheetName, startRow) {
   if (!sheetName) {
     console.error('Sheet name is undefined. Please provide a valid sheet name.');
     return;
   }
 
   try {
-    // Find the actual next empty row in column C
-    const colCheck = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_ID,
-      range: `${sheetName}!C:C`,
-    });
-    const existingRows = colCheck.data.values || [];
-    const nextRow = Math.max(2, existingRows.length + 1);
+    const nextRow = startRow || await getNextRow(sheetName);
 
     const targetRange = `${sheetName}!C${nextRow}`;
 
@@ -389,6 +393,7 @@ async function appendToSheet(values, sheetName) {
 
     await sheets.spreadsheets.values.update(request);
     console.log(`✅ Data written to row ${nextRow}.`);
+    return nextRow;
   } catch (error) {
     console.error('❌ Error writing to Google Sheets:', error.message);
   }
@@ -468,6 +473,57 @@ function parseQuestion(questionString) {
 function cleanJsonResponse(response) {
   // Remove markdown code blocks and clean the response
   return response.replace(/```json\s*|\s*```/g, '').trim();
+}
+
+// A page usually holds more than one question, and the model is inconsistent about
+// how it returns them: a JSON array, several bare objects back to back, or several
+// separate ```json blocks. Always hand back a flat array of question objects.
+function parseTranscriptionResponse(raw) {
+  const cleaned = cleanJsonResponse(raw);
+
+  try {
+    const parsed = JSON.parse(cleaned);
+    return Array.isArray(parsed) ? parsed : [parsed];
+  } catch (err) {
+    // Not a single JSON value — fall through and pull the values out one by one.
+  }
+
+  const items = [];
+  let depth = 0, start = -1, inString = false, escaped = false;
+
+  for (let i = 0; i < cleaned.length; i++) {
+    const ch = cleaned[i];
+
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+
+    if (ch === '"') { inString = true; continue; }
+
+    if (ch === '{' || ch === '[') {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (ch === '}' || ch === ']') {
+      if (depth === 0) continue; // stray closer, ignore
+      depth--;
+      if (depth === 0 && start !== -1) {
+        try {
+          const value = JSON.parse(cleaned.slice(start, i + 1));
+          if (Array.isArray(value)) items.push(...value);
+          else items.push(value);
+        } catch (err) {
+          console.error('⚠️ Skipping unparseable JSON block:', err.message);
+        }
+        start = -1;
+      }
+    }
+  }
+
+  if (items.length === 0) throw new Error('No valid JSON objects found in transcription response');
+  return items;
 }
 
 // Fix the convertFormattingToMarkup function
@@ -690,6 +746,10 @@ async function clearProcessingQueue() {
   }
 }
 
+// Render resolution for page images. Figure crops reuse it so that the
+// point -> pixel conversion matches the pages the model was shown.
+const PDF_RENDER_DPI = 150;
+
 // Resolve the pdftocairo (poppler) binary in a cross-platform way.
 // Precedence: POPPLER_PATH env > bundled vendor binary > common system paths > PATH.
 function resolvePdftocairo() {
@@ -746,7 +806,7 @@ async function convertPdfToImages(pdfPath, outputDir) {
 
   const pdftocairo = resolvePdftocairo();
   const outPrefix = path.join(outputDir, 'page');
-  const cmd = `"${pdftocairo}" -png -r 150 "${pdfPath}" "${outPrefix}"`;
+  const cmd = `"${pdftocairo}" -png -r ${PDF_RENDER_DPI} "${pdfPath}" "${outPrefix}"`;
 
   try {
     console.log(`Converting PDF: ${pdfPath} to images...`);
@@ -868,7 +928,7 @@ async function processPdfAndUpload() {
 
       console.log(`✅ All images from ${pdfFile.name} uploaded to Google Drive.`);
 
-      const responses = await transcribeImages(images, newSheetName);
+      const responses = await transcribeImages(images, newSheetName, pdfFilePath);
       for (const r of responses) {
         if (r.error) {
           failures.push({ sheet: newSheetName, image: r.image, error: r.error });
@@ -884,9 +944,241 @@ async function processPdfAndUpload() {
   return failures;
 }
 
+// --- Graph extraction ------------------------------------------------------
+// Questions the model marks with %GRAPH% have their figure cropped out of the
+// PDF, uploaded to Drive, and linked into the sheet as an =IMAGE() thumbnail.
+
+const GRAPH_MARKER = '%GRAPH%';
+const CHOICE_GRAPH_MARKER = '%CHOICES_GRAPH%';
+const CHOICE_COUNT = 4;
+
+// Both Reading and Writing modules hold 27 questions each and land in rows 2-55,
+// so math cannot begin before this row.
+const RW_QUESTION_COUNT = 54;
+const FIRST_MATH_ROW = 2 + RW_QUESTION_COUNT;
+
+// The section a question belongs to is decided by its position in the exam, not
+// by the transcriber's guess: a Reading and Writing question built around a
+// graph or a data table often gets called "Math" from the look of the page.
+function sectionForRow(sheetRow) {
+  return sheetRow >= FIRST_MATH_ROW ? 'Math' : 'Reading and Writing';
+}
+
+function pageNumberFromImage(imagePath) {
+  const match = path.basename(imagePath).match(/(\d+)/);
+  return match ? parseInt(match[1], 10) : null;
+}
+
+function questionHasGraph(q) {
+  return `${q.question || ''} ${q.passage || ''}`.includes(GRAPH_MARKER);
+}
+
+function questionHasChoiceGraphs(q) {
+  return `${q.question || ''}`.includes(CHOICE_GRAPH_MARKER);
+}
+
+function questionNeedsFigures(q) {
+  return questionHasGraph(q) || questionHasChoiceGraphs(q);
+}
+
+// Work out which figures on a page belong to which question. Figures arrive
+// sorted top to bottom and questions are transcribed in reading order, so the
+// boxes are handed out in sequence: a %GRAPH% question takes one (its stimulus),
+// a %CHOICES_GRAPH% question takes four (its answer choices).
+function allocateFigures(questions, boxes) {
+  const plan = questions.map(() => ({ graph: null, choices: null }));
+  let next = 0;
+
+  questions.forEach((q, i) => {
+    if (questionHasGraph(q) && next < boxes.length) {
+      plan[i].graph = boxes[next++];
+    }
+    if (questionHasChoiceGraphs(q)) {
+      const remaining = boxes.length - next;
+      if (remaining >= CHOICE_COUNT) {
+        plan[i].choices = boxes.slice(next, next + CHOICE_COUNT);
+        next += CHOICE_COUNT;
+      } else {
+        console.warn(`⚠️ Question ${i + 1} expects ${CHOICE_COUNT} choice figures but only ${remaining} remain; leaving choice images blank.`);
+      }
+    }
+  });
+
+  return plan;
+}
+
+// Ask the Python service where the figures are on the given pages.
+async function locateFigures(pdfPath, pageNumbers) {
+  if (!pageNumbers.length) return {};
+  try {
+    const response = await fetch('http://localhost:5001/figures', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pdf_path: pdfPath, pages: pageNumbers })
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    if (!data.success) throw new Error(data.error || 'Figure detection failed');
+    return data.pages || {};
+  } catch (error) {
+    console.error('⚠️ Could not locate figures:', error.message);
+    return {};
+  }
+}
+
+// Crop a region straight out of the PDF. pdftocairo's -x/-y/-W/-H are in
+// pixels at the chosen resolution, so points are scaled by dpi/72.
+async function cropFigure(pdfPath, pageNumber, box, outPath) {
+  const scale = PDF_RENDER_DPI / 72;
+  const x = Math.max(0, Math.round(box.x0 * scale));
+  const y = Math.max(0, Math.round(box.top * scale));
+  const w = Math.round((box.x1 - box.x0) * scale);
+  const h = Math.round((box.bottom - box.top) * scale);
+
+  const prefix = outPath.replace(/\.png$/i, '');
+  const cmd = `"${resolvePdftocairo()}" -png -r ${PDF_RENDER_DPI} -f ${pageNumber} -l ${pageNumber}`
+    + ` -x ${x} -y ${y} -W ${w} -H ${h} -singlefile "${pdfPath}" "${prefix}"`;
+
+  await execAsync(cmd);
+  return `${prefix}.png`;
+}
+
+// Join crops top to bottom via the Python service (Pillow), for a figure that
+// runs off one page and continues on the next.
+async function stitchCrops(parts, outPath) {
+  const response = await fetch('http://localhost:5001/stitch', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ parts, out_path: outPath })
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const data = await response.json();
+  if (!data.success) throw new Error(data.error || 'Stitch failed');
+  return data.path;
+}
+
+// Crop one figure, following it onto the next page when it runs off the bottom.
+async function renderFigure(pdfPath, pageNumber, box, figuresByPage, outPath) {
+  const cropped = await cropFigure(pdfPath, pageNumber, box, outPath);
+  if (!box.touches_bottom) return cropped;
+
+  const nextBoxes = figuresByPage[String(pageNumber + 1)] || [];
+  const continuation = nextBoxes.find(b => b.touches_top);
+  if (!continuation) return cropped;
+
+  console.log(`🔗 page-${pageNumber}: figure continues onto page ${pageNumber + 1}; stitching.`);
+  const tailPath = outPath.replace(/\.png$/i, '-cont.png');
+  const tail = await cropFigure(pdfPath, pageNumber + 1, continuation, tailPath);
+  return stitchCrops([cropped, tail], outPath.replace(/\.png$/i, '-joined.png'));
+}
+
+// Drive files need link sharing before =IMAGE() can render them.
+async function makeFilePublic(fileId) {
+  await drive.permissions.create({
+    fileId,
+    requestBody: { role: 'reader', type: 'anyone' },
+    supportsAllDrives: true,
+  });
+}
+
+// Crop one figure, upload it, and return an =IMAGE() formula for it.
+async function linkFigure(pdfPath, pageNumber, box, figuresByPage, label) {
+  const outPath = path.join(OUTPUT_DIR, `graph-p${pageNumber}-${label}.png`);
+  const cropped = await renderFigure(pdfPath, pageNumber, box, figuresByPage, outPath);
+  const fileId = await uploadFileToDrive(cropped);
+  await makeFilePublic(fileId);
+  console.log(`🖼️  page-${pageNumber}: figure ${label} cropped and linked (${box.source}).`);
+  // The classic uc?export=view host stopped working inside =IMAGE();
+  // lh3.googleusercontent.com/d/<id> is what renders today.
+  return `=IMAGE("https://lh3.googleusercontent.com/d/${fileId}")`;
+}
+
+// Produce the graph-column formula for each question on a page, plus the four
+// choice-image formulas for any question whose answer choices are pictures.
+async function buildFigureFormulas(questions, pdfPath, imagePath, figuresByPage) {
+  const graphFormulas = questions.map(() => '');
+  const choiceFormulas = {};
+
+  const pageNumber = pageNumberFromImage(imagePath);
+  const boxes = figuresByPage[String(pageNumber)] || [];
+
+  if (!boxes.length) {
+    console.warn(`⚠️ page-${pageNumber}: question(s) marked for a figure but none was found.`);
+    return { graphFormulas, choiceFormulas };
+  }
+
+  const plan = allocateFigures(questions, boxes);
+
+  for (let i = 0; i < plan.length; i++) {
+    const { graph, choices } = plan[i];
+
+    if (graph) {
+      try {
+        graphFormulas[i] = await linkFigure(pdfPath, pageNumber, graph, figuresByPage, `q${i + 1}`);
+      } catch (error) {
+        console.error(`❌ page-${pageNumber}: figure for question ${i + 1} failed:`, error.message);
+      }
+    }
+
+    if (choices) {
+      const letters = ['A', 'B', 'C', 'D'];
+      const built = [];
+      for (let c = 0; c < choices.length; c++) {
+        try {
+          built.push(await linkFigure(pdfPath, pageNumber, choices[c], figuresByPage, `q${i + 1}${letters[c]}`));
+        } catch (error) {
+          console.error(`❌ page-${pageNumber}: choice ${letters[c]} of question ${i + 1} failed:`, error.message);
+          built.push('');
+        }
+      }
+      choiceFormulas[i] = built;
+    }
+  }
+
+  return { graphFormulas, choiceFormulas };
+}
+
+// Graph links live in column N, written at a known row so they stay aligned
+// with their questions even though most rows have no graph.
+async function writeGraphColumn(formulas, startRow, sheetName) {
+  if (!formulas.some(f => f)) return;
+  try {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${sheetName}!N${startRow}`,
+      valueInputOption: 'USER_ENTERED', // RAW would store the formula as text
+      resource: { values: formulas.map(f => [f]) },
+    });
+    console.log(`✅ Graph links written from row ${startRow}.`);
+  } catch (error) {
+    console.error('❌ Error writing graph links:', error.message);
+  }
+}
+
+// Picture answer choices overwrite the (empty) choice text in F-I. Written
+// separately from the main append because those go in as RAW, which would
+// store an =IMAGE() call as literal text.
+async function writeChoiceImages(choiceFormulas, startRow, sheetName) {
+  for (const [offset, formulas] of Object.entries(choiceFormulas)) {
+    const row = startRow + Number(offset);
+    try {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: SPREADSHEET_ID,
+        range: `${sheetName}!F${row}:I${row}`,
+        valueInputOption: 'USER_ENTERED',
+        resource: { values: [formulas] },
+      });
+      console.log(`✅ Choice images written to row ${row}.`);
+    } catch (error) {
+      console.error(`❌ Error writing choice images to row ${row}:`, error.message);
+    }
+  }
+}
+
 // Function to transcribe images
-async function transcribeImages(images, sheetName) {
+async function transcribeImages(images, sheetName, pdfPath) {
   const responses = [];
+  const figureCache = {};
 
   for (const image of images) {
     console.log(`Transcribing image: ${image}`);
@@ -906,12 +1198,19 @@ async function transcribeImages(images, sheetName) {
                   You are to return it in valid JSON format like the following. Carefully analyze the photo and encapsulate accordingly. Do not confuse "  with each other. There can be multiple in one question. If there are any line breaks, use
                   \\n for single line breaks and \\n\\n for double line breaks. If there is a graph, write %GRAPH% at the beginning of the question. If there are any italics, use *text*. If there are any quotes, use "text". STRICTLY FOLLOW: If there are any underlines, use {text}.
                   For the "section" field: determine whether this is a "Reading and Writing" or "Math" question. Reading and Writing questions have passages, literary texts, or are mostly text-based. Math questions involve equations, numbers, graphs, or mathematical reasoning.
+                  For Math questions: write every equation, expression, fraction, exponent, radical, or inequality as LaTeX wrapped in single dollar signs, e.g. $x^2 + \\\\frac{3}{4} \\\\leq 12$. Escape backslashes as \\\\ so the JSON stays valid. Math questions usually have no passage; leave "passage" as an empty string in that case.
+                  If a question has no answer choices at all (a student-produced response / fill-in-the-blank question), omit the "\\n\\nA) ... D)" block entirely: put only the question text in "question", and put the answer value itself (not a letter) in "correct_answer".
+                  A page often contains more than one question. Return a JSON ARRAY containing one object per question on the page, in the order they appear. Return an array even when there is only one question. Return exactly one array — never several separate objects or several code blocks.
+                  If the answer choices are themselves graphs, diagrams, number lines, or pictures rather than text, write %CHOICES_GRAPH% at the very beginning of the "question" field, and leave out the "\\n\\nA) ... D)" block since there is no choice text to transcribe.
+                  Keep the two text fields strictly separate. "passage" holds ONLY the stimulus the question is about — the reading text, excerpt, table, or graph description printed above the prompt. Never put the prompt sentence in "passage"; if a question has no stimulus, use an empty string. "question" holds the prompt sentence (the part that asks something, e.g. "Which choice completes the text...?") followed by the answer choices. Never start "question" with "A)".
+                  [
                   {
                   "section": "[Reading and Writing or Math]",
                   "passage": "[passage]",
                   "question": "[question]\\n\\nA) [Option A]\\nB) [Option B]\\nC) [Option C]\\nD) [Option D]\\n\\n",
                   "correct_answer": "[Letter]"
                   }
+                  ]
                 `,
               },
               {
@@ -931,18 +1230,41 @@ async function transcribeImages(images, sheetName) {
 
       let parseMessage;
       try {
-        if (typeof newMessage === 'string') {
-          // Clean the JSON response before parsing
-          newMessage = cleanJsonResponse(newMessage);
-          parseMessage = JSON.parse(newMessage);
+        parseMessage = parseTranscriptionResponse(newMessage);
+
+        console.log(`Parsed ${parseMessage.length} question(s) from image.`);
+
+        // The destination rows decide the section, so they are resolved before
+        // the values are built rather than after the write.
+        const startRow = await getNextRow(sheetName);
+
+        const valuesToAppend = parseMessage.map((q, i) => {
+          console.log("RAW QUESTION:", JSON.stringify(q.question));
+          const { stem, choiceA, choiceB, choiceC, choiceD } = parseQuestion(q.question);
+          const section = sectionForRow(startRow + i);
+          if (q.section && !q.section.toLowerCase().startsWith(section.slice(0, 4).toLowerCase())) {
+            console.warn(`⚠️ Row ${startRow + i}: transcriber said "${q.section}", position says "${section}" — using position.`);
+          }
+          return [section, q.passage || '', stem, choiceA, choiceB, choiceC, choiceD, q.correct_answer || ''];
+        });
+
+        await appendToSheet(valuesToAppend, sheetName, startRow);
+
+        // Only pages carrying a figure-bearing question are scanned.
+        if (pdfPath && startRow && parseMessage.some(questionNeedsFigures)) {
+          const pageNumber = pageNumberFromImage(image);
+          // The next page is fetched too, in case a figure runs across the break.
+          for (const p of [pageNumber, pageNumber + 1]) {
+            if (figureCache[String(p)] === undefined) {
+              const found = await locateFigures(pdfPath, [p]);
+              figureCache[String(p)] = found[String(p)] || []; // cache misses too
+            }
+          }
+          const { graphFormulas, choiceFormulas } =
+            await buildFigureFormulas(parseMessage, pdfPath, image, figureCache);
+          await writeGraphColumn(graphFormulas, startRow, sheetName);
+          await writeChoiceImages(choiceFormulas, startRow, sheetName);
         }
-
-        console.log("Parsed Message:", newMessage);
-        console.log("RAW QUESTION:", JSON.stringify(parseMessage.question));
-        const { stem, choiceA, choiceB, choiceC, choiceD } = parseQuestion(parseMessage.question);
-        const valuesToAppend = [[parseMessage.section || '', parseMessage.passage, stem, choiceA, choiceB, choiceC, choiceD, parseMessage.correct_answer]];
-
-        await appendToSheet(valuesToAppend, sheetName);
 
         console.log(`Response for image appended to Google Sheets!`);
         responses.push({
@@ -1200,6 +1522,12 @@ async function processExcelFile(filePath, sheetName) {
     }
 
     const results = [];
+    // Math always comes after both Reading and Writing modules, which fill a fixed
+    // 54 rows, so the section boundary is positional. The transcriber's own section
+    // label is not trusted for routing: a graph or a numeric passage can get a
+    // Reading and Writing question labelled "Math", and one such mislabel would
+    // otherwise send every later question down the wrong path.
+    let inMathSection = false;
 
     for (let i = 1; i < jsonData.length; i++) {
       const row = jsonData[i];
@@ -1207,16 +1535,38 @@ async function processExcelFile(filePath, sheetName) {
 
       if (!row[2] && !row[3] && !row[4]) continue; // Skip if C, D, E are all empty
 
+      const sheetRow = i + 1; // jsonData[0] is the header, which is sheet row 1
+      const labelledMath = /^\s*math/i.test(row[2] || '');
+
+      if (sheetRow >= FIRST_MATH_ROW) {
+        inMathSection = true;
+      } else if (labelledMath) {
+        console.warn(`⚠️ Row ${sheetRow} is labelled Math but sits in the Reading and Writing block (math starts at row ${FIRST_MATH_ROW}) — classifying it as Reading and Writing.`);
+      }
+
       // C=section, D=passage, E=stem, F=choiceA, G=choiceB, H=choiceC, I=choiceD, J=answer
       // Reconstruct with A) B) C) D) labels to match model training format
       const choicesText = [
-        row[6] ? `A) ${row[6]}` : '',
-        row[7] ? `B) ${row[7]}` : '',
-        row[8] ? `C) ${row[8]}` : '',
-        row[9] ? `D) ${row[9]}` : '',
+        row[5] ? `A) ${row[5]}` : '',
+        row[6] ? `B) ${row[6]}` : '',
+        row[7] ? `C) ${row[7]}` : '',
+        row[8] ? `D) ${row[8]}` : '',
       ].filter(p => p).join('\n');
 
       const question = `${row[3] || ''}\n\n${row[4] || ''}\n\n${choicesText}`.trim();
+
+      // The classifier is trained on Reading and Writing only, so math rows skip it.
+      // 'N/A' rather than '' because TwiceToSheet finds its next row by counting
+      // non-empty cells in column K — blanks would knock the rows out of alignment.
+      if (inMathSection) {
+        results.push({
+          question,
+          passageType: 'N/A',
+          questionType: 'N/A',
+          difficultyLevel: 'N/A'
+        });
+        continue;
+      }
 
       try {
         const response = await fetch('http://localhost:5001/classify', {
