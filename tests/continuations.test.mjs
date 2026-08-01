@@ -140,3 +140,75 @@ test('merging does not mutate the input pages', () => {
   mergePageContinuations(pages);
   assert.equal(pages[1].questions.length, 1, 'the caller\'s array must be intact');
 });
+
+// --- A numbered question is never a tail -------------------------------------
+//
+// On a one-question-per-page exam the model marks nearly every page as
+// continuing the previous one, because each page opens partway through a
+// passage. Those entries reached the continuation branch, found the previous
+// question already complete, and were discarded outright. On 202603usv1 that
+// deleted six whole questions — pages 4, 5, 10, 15, 37 and 48 each returned one
+// numbered, complete question and ended up holding nothing.
+//
+// A real tail has lost its stem, and the printed number went with it. So an entry
+// that names its own number is a question, whatever the model labelled it.
+
+test('a numbered question flagged as a continuation is kept, not deleted', () => {
+  const out = mergePageContinuations([
+    { image: 'page-03.png', questions: [head('Which choice best states the main idea?\n\nA) one\nB) two\nC) three\nD) four', { question_number: 3 })] },
+    { image: 'page-04.png', questions: [head('Which choice completes the text with the most logical transition?\n\nA) a\nB) b\nC) c\nD) d', { question_number: 4, continues_previous_page: true })] },
+  ]);
+
+  assert.equal(out[1].questions.length, 1, 'question 4 must survive');
+  assert.equal(out[1].questions[0].question_number, 4);
+  assert.match(out[1].questions[0].question, /most logical transition/);
+});
+
+test('the question it was wrongly attached to is left untouched', () => {
+  const out = mergePageContinuations([
+    { image: 'p3.png', questions: [head('Question three?\n\nA) one\nB) two\nC) three\nD) four', { question_number: 3 })] },
+    { image: 'p4.png', questions: [head('Question four?\n\nA) w\nB) x\nC) y\nD) z', { question_number: 4, continues_previous_page: true })] },
+  ]);
+
+  assert.match(out[0].questions[0].question, /Question three\?/);
+  assert.ok(!out[0].questions[0].question.includes('Question four'), 'nothing was merged in');
+});
+
+test('an unnumbered tail is still folded in as before', () => {
+  // The rule must not stop genuine tails working — a tail lost its number along
+  // with its stem, which is exactly what tells the two apart.
+  const out = mergePageContinuations([
+    { image: 'p1.png', questions: [head('Which choice completes the text?\n\nA) one\nB) two')] },
+    { image: 'p2.png', questions: [tail('C) three\nD) four')] },
+  ]);
+
+  assert.equal(out[1].questions.length, 0, 'the tail is consumed');
+  assert.match(out[0].questions[0].question, /C\) three/);
+});
+
+test('a numbered orphan choice block is kept rather than absorbed', () => {
+  const out = mergePageContinuations([
+    { image: 'p1.png', questions: [head('Complete question?\n\nA) one\nB) two\nC) three\nD) four', { question_number: 7 })] },
+    { image: 'p2.png', questions: [head('A) w B) x C) y D) z', { question_number: 8 })] },
+  ]);
+
+  assert.equal(out[1].questions.length, 1, 'question 8 keeps its place in the run');
+  assert.equal(out[1].questions[0].question_number, 8);
+});
+
+test('every page of a one-question-per-page exam survives', () => {
+  // Ten pages, each a complete numbered question, every one flagged as a
+  // continuation. Before the fix this returned one question.
+  const pages = Array.from({ length: 10 }, (_, i) => ({
+    image: `page-${i + 1}.png`,
+    questions: [head(`Question ${i + 1}?\n\nA) one\nB) two\nC) three\nD) four`, {
+      question_number: i + 1,
+      continues_previous_page: i > 0,
+    })],
+  }));
+
+  const out = mergePageContinuations(pages);
+  const numbers = out.flatMap((p) => p.questions.map((q) => q.question_number));
+
+  assert.deepEqual(numbers, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+});

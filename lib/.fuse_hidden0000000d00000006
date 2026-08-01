@@ -1,0 +1,609 @@
+// Pure pipeline logic — no network, no filesystem, no Google clients.
+// Split out from server.js so the parts that decide what lands in which row can
+// be tested directly; everything here is a plain function of its arguments.
+
+import path from 'path';
+
+export const CHOICE_GRAPH_MARKER = '%CHOICES_GRAPH%';
+export const CHOICE_IMAGE_LABEL = 'CHOICE_IMAGE';
+
+// Both Reading and Writing modules hold 27 questions each and land in rows 2-55,
+// so math cannot begin before this row.
+// The sheet template pre-creates a fixed block of rows per exam, matching the
+// digital SAT: 27 questions in each of the two Reading and Writing modules, then
+// 22 in each of the two math modules — 98 in all. Those slots are what the
+// module/number columns are numbered against, so questions must land in them
+// rather than simply following on from whatever was written last.
+export const RW_QUESTION_COUNT = 27 * 2;   // 54, rows 2-55
+export const MATH_QUESTION_COUNT = 22 * 2; // 44, rows 56-99
+export const FIRST_MATH_ROW = 2 + RW_QUESTION_COUNT;                       // 56
+export const LAST_QUESTION_ROW = FIRST_MATH_ROW + MATH_QUESTION_COUNT - 1; // 99
+export const QUESTION_CAPACITY = RW_QUESTION_COUNT + MATH_QUESTION_COUNT;  // 98
+
+// The section a question belongs to is decided by its position in the exam, not
+// by the transcriber's guess: a Reading and Writing question built around a
+// graph or a data table often gets called "Math" from the look of the page.
+//
+// The template fixes which rows belong to which section: 2-55 are the two
+// Reading and Writing modules, 56-99 the two math modules. So the row settles the
+// label, and Reading and Writing cannot exceed 54 questions however the page was
+// read. The page signals still decide *where* a page is written — see
+// planPageWrite — but once a question has a row, its section follows from it.
+export function sectionFor(sheetRow) {
+  return sheetRow >= FIRST_MATH_ROW ? 'Math' : 'Reading and Writing';
+}
+
+// Crossing into the math block is destructive — it skips the rest of the Reading
+// and Writing slots — so it takes two independent signals agreeing: the page sits
+// at or beyond where the structure pass placed the math modules, AND the
+// transcriber read most of the questions on the page as math. Either alone has
+// been wrong: the structure pass can name the last Reading and Writing page, and
+// the transcriber calls a graph-heavy Reading and Writing question "Math".
+// What an uploaded exam actually contains. A PDF holding only the math modules
+// has no Reading and Writing pages for the structure pass to find a boundary
+// after, so every signal says "Reading and Writing" and 44 math questions get
+// written into rows 2-55 under the wrong heading. The user knows which modules
+// they dropped in, so they are asked rather than guessed at.
+export const EXAM_SCOPE = { BOTH: 'both', MATH: 'math', RW: 'rw' };
+
+// The rows an exam of a given scope is allowed to occupy.
+export function rowWindowFor(scope) {
+  if (scope === EXAM_SCOPE.MATH) return { first: FIRST_MATH_ROW, last: LAST_QUESTION_ROW };
+  if (scope === EXAM_SCOPE.RW) return { first: 2, last: FIRST_MATH_ROW - 1 };
+  return { first: 2, last: LAST_QUESTION_ROW };
+}
+
+// Whether one question goes in the math block. A declared scope settles it
+// outright; only a full exam has to fall back to reading the page.
+export function questionIsMath(q, isMathPage, scope = EXAM_SCOPE.BOTH) {
+  if (scope === EXAM_SCOPE.MATH) return true;
+  if (scope === EXAM_SCOPE.RW) return false;
+  return isMathPage || /^\s*math/i.test(q?.section || '');
+}
+
+export function pageIsMath(questions, pageNumber, mathStartPage, scope = EXAM_SCOPE.BOTH) {
+  if (scope === EXAM_SCOPE.MATH) return true;
+  if (scope === EXAM_SCOPE.RW) return false;
+  if (!mathStartPage || pageNumber < mathStartPage) return false;
+
+  const labelledMath = questions.filter(q => /^\s*math/i.test(q.section || '')).length;
+  const agrees = labelledMath * 2 >= questions.length;
+
+  if (!agrees) {
+    console.warn(`⚠️ page-${pageNumber}: the structure pass placed this at or past the math start (page ${mathStartPage}) but ${questions.length - labelledMath}/${questions.length} question(s) read as Reading and Writing — keeping it in Reading and Writing.`);
+  }
+  return agrees;
+}
+
+// The answer key printed at the end of a practice exam must never reach the
+// transcriber. Left in, its pages come back as entries and its letters land in
+// the sheet as if they were exam content. Dropping whole pages is not enough on
+// its own: the key begins directly beneath the last real question, so the page
+// that carries both has to be transcribed and then checked.
+//
+// Both tests are deliberately literal. The key is a heading followed by a bare
+// numbered list, and nothing in a question body is shaped like that.
+export const ANSWER_KEY_HEADING =
+  /(?:reading and writing|math)\s*module\s*\d+\s*answers?(?:\s*key)?|^\s*answers?\s*key\s*$/im;
+
+// One line of the key: "12. C", "5. 5900", "14. - 21", "19. 5.5".
+const ANSWER_KEY_LINE = /^\s*\d{1,2}\s*[.)]\s*(?:[A-D]|-?\s*\d+(?:[./]\d+)?)\s*$/;
+
+// A transcribed entry that is really a slice of the answer key.
+export function isAnswerKeyBlock(q) {
+  const text = `${q?.passage || ''}\n${q?.question || ''}`.trim();
+  if (!text) return false;
+  if (ANSWER_KEY_HEADING.test(text)) return true;
+
+  const lines = text.split('\n').map((line) => line.trim()).filter(Boolean);
+  const keyLines = lines.filter((line) => ANSWER_KEY_LINE.test(line)).length;
+  // Three is past coincidence, and demanding a majority spares a real question
+  // that happens to contain a numbered line or two.
+  return keyLines >= 3 && keyLines * 2 > lines.length;
+}
+
+// Drop any entry that is answer key rather than exam content, naming each one so
+// a page that quietly loses half its output is not a mystery.
+export function stripAnswerKeyEntries(questions = [], label = '') {
+  return questions.filter((q) => {
+    if (!isAnswerKeyBlock(q)) return true;
+    console.warn(`🔒 ${label}: discarded an answer key block; it is not exam content.`);
+    return false;
+  });
+}
+
+
+// Parse question blob into stem + individual choices
+const LETTERS = ['A', 'B', 'C', 'D'];
+
+// Pull out whatever answer choices a blob contains. Markers may be separated by
+// newlines or, when a page break has flattened them, by plain spaces — and the
+// list does not have to start at A.
+export function extractChoices(text) {
+  const blob = String(text || '');
+  const found = [...blob.matchAll(/(?:^|[\s])([A-D])\)\s*/g)];
+  const choices = { A: '', B: '', C: '', D: '' };
+  if (!found.length) return { stem: blob.trim(), choices };
+
+  const stem = blob.slice(0, found[0].index).trim();
+  found.forEach((match, i) => {
+    const from = match.index + match[0].length;
+    const to = i + 1 < found.length ? found[i + 1].index : blob.length;
+    choices[match[1]] = blob.slice(from, to).trim();
+  });
+  return { stem, choices };
+}
+
+export function parseQuestion(questionString) {
+  if (!questionString) return { stem: '', choiceA: '', choiceB: '', choiceC: '', choiceD: '' };
+  const { stem, choices } = extractChoices(questionString);
+  return { stem, choiceA: choices.A, choiceB: choices.B, choiceC: choices.C, choiceD: choices.D };
+}
+
+// The model often puts the whole question into "passage" and leaves "question"
+// empty, which lands a blank content cell and no choices in the sheet. When that
+// happens the passage is split at its prompt sentence: the prompt and anything
+// after it become the question, and what came before stays the passage.
+export function salvageQuestionFields(q) {
+  const question = String(q.question || '').trim();
+  const passage = String(q.passage || '').trim();
+  if (question || !passage) return q;
+
+  // The prompt is the last sentence that asks something.
+  const prompts = [...passage.matchAll(/(^|[.?!]\s+|\n)([A-Z][^.?!\n]*\?)/g)];
+  if (!prompts.length) return { ...q, question: passage, passage: '' };
+
+  const last = prompts[prompts.length - 1];
+  const start = last.index + last[1].length;
+
+  return { ...q, question: passage.slice(start).trim(), passage: passage.slice(0, start).trim() };
+}
+
+
+// Add this helper function at the top
+export function cleanJsonResponse(response) {
+  // Remove markdown code blocks and clean the response
+  return response.replace(/```json\s*|\s*```/g, '').trim();
+}
+
+// Unwrap the schema's { questions: [...] } envelope.
+export function unwrapQuestions(value) {
+  if (Array.isArray(value)) return value;
+  if (value && Array.isArray(value.questions)) return value.questions;
+  return [value];
+}
+
+// With a strict schema the response is guaranteed to parse, so the first branch
+// is the normal path. The rest is a safety net for responses produced without
+// the schema: a page holds several questions and an unconstrained model returns
+// them inconsistently — a JSON array, bare objects back to back, or several
+// separate ```json blocks. Always hand back a flat array of question objects.
+export function parseTranscriptionResponse(raw) {
+  const cleaned = cleanJsonResponse(raw);
+
+  try {
+    return unwrapQuestions(JSON.parse(cleaned));
+  } catch (err) {
+    // Not a single JSON value — fall through and pull the values out one by one.
+  }
+
+  const items = [];
+  let depth = 0, start = -1, inString = false, escaped = false;
+
+  for (let i = 0; i < cleaned.length; i++) {
+    const ch = cleaned[i];
+
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+
+    if (ch === '"') { inString = true; continue; }
+
+    if (ch === '{' || ch === '[') {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (ch === '}' || ch === ']') {
+      if (depth === 0) continue; // stray closer, ignore
+      depth--;
+      if (depth === 0 && start !== -1) {
+        try {
+          items.push(...unwrapQuestions(JSON.parse(cleaned.slice(start, i + 1))));
+        } catch (err) {
+          console.error('⚠️ Skipping unparseable JSON block:', err.message);
+        }
+        start = -1;
+      }
+    }
+  }
+
+  if (items.length === 0) throw new Error('No valid JSON objects found in transcription response');
+  return items;
+}
+
+
+export function pageNumberFromImage(imagePath) {
+  const match = path.basename(imagePath).match(/(\d+)/);
+  return match ? parseInt(match[1], 10) : null;
+}
+
+// Questions whose answer choices are pictures are marked in the choice columns
+// rather than transcribed, since there is no choice text to capture.
+export function questionHasChoiceGraphs(q) {
+  // The model puts the marker in whichever field it considers the question, so
+  // both are checked.
+  return `${q.question || ''} ${q.passage || ''}`.includes(CHOICE_GRAPH_MARKER);
+}
+
+
+// Run an async job over a list with a ceiling on how many are in flight, keeping
+// results in input order however they finish.
+export async function mapWithConcurrency(items, limit, job) {
+  const results = new Array(items.length);
+  let cursor = 0;
+
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (true) {
+      const index = cursor++;
+      if (index >= items.length) return;
+      results[index] = await job(items[index], index);
+    }
+  });
+
+  await Promise.all(workers);
+  return results;
+}
+
+
+// Compare what the run produced against what the structure pass expected. This
+// only reports; nothing here changes a single cell. The point is that a short or
+// misread exam announces itself instead of quietly becoming a short sheet.
+export function reportRunHealth(transcribed, responses, expected, sheetName) {
+  const written = responses.reduce((n, r) => n + (r.response ? r.response.length : 0), 0);
+  const problems = [];
+
+  const failed = responses.filter(r => r.error);
+  if (failed.length) problems.push(`${failed.length} page(s) failed: ${failed.map(r => path.basename(r.image)).join(', ')}`);
+
+  const skipped = responses.filter(r => r.skipped);
+  if (skipped.length) problems.push(`${skipped.length} page(s) skipped once the sheet was full`);
+
+  if (expected?.totalQuestions && written < expected.totalQuestions) {
+    problems.push(`expected about ${expected.totalQuestions} question(s) but wrote ${written}`);
+  }
+
+  if (expected?.questionsPerPage) {
+    const odd = transcribed
+      .filter(p => p.questions && p.questions.length !== expected.questionsPerPage)
+      .map(p => `${path.basename(p.image)}:${p.questions.length}`);
+    if (odd.length) {
+      problems.push(`${odd.length} page(s) did not hold the usual ${expected.questionsPerPage} question(s) — ${odd.slice(0, 8).join(', ')}${odd.length > 8 ? ', …' : ''}`);
+    }
+  }
+
+  if (!problems.length) {
+    console.log(`✅ "${sheetName}": ${written} question(s) written, nothing looks off.`);
+    return;
+  }
+
+  console.warn(`\n⚠️ "${sheetName}" finished with things worth checking:`);
+  for (const problem of problems) console.warn(`   • ${problem}`);
+  console.warn('');
+}
+
+
+// Decide where a page's questions go, or that they do not go at all.
+//
+// The sheet is two fixed blocks — Reading and Writing in rows 2-55, math in
+// 56-99 — and both have to be defended from the other. Reading and Writing
+// coming up short must not let math drift up into the empty slots, and Reading
+// and Writing running long must not push math down and off the end. Every
+// decision is returned rather than acted on, so this stays a pure function.
+export function planPageWrite({ questions, pageNumber, nextRow, mathStartPage, scope = EXAM_SCOPE.BOTH }) {
+  const isMathPage = pageIsMath(questions, pageNumber, mathStartPage, scope);
+  const window = rowWindowFor(scope);
+  const notes = [];
+  let startRow = nextRow;
+
+  // Math begins in its own block even if Reading and Writing left gaps. This is
+  // also what lifts a math-only exam out of rows 2-55: its every page is math.
+  if (isMathPage && startRow < FIRST_MATH_ROW) {
+    notes.push(`⚠️ Reading and Writing filled only ${startRow - 2} of ${RW_QUESTION_COUNT} slots; leaving rows ${startRow}-${FIRST_MATH_ROW - 1} blank so math starts in its own block.`);
+    startRow = FIRST_MATH_ROW;
+  }
+
+  // Reading and Writing may not spend math's slots. Restricted to pages the
+  // structure pass puts before the math modules, so a math page the transcriber
+  // misread as Reading and Writing is still written rather than thrown away.
+  // Discarding is only safe when both signals agree the questions are Reading and
+  // Writing. The structure pass placed the math boundary too late on one exam and
+  // the first math question — which the transcriber had correctly labelled Math —
+  // was thrown away as an overrun. A question the model calls Math is written.
+  const modelSaysMath = questions.filter((q) => /^\s*math/i.test(q.section || '')).length * 2
+    >= questions.length;
+  const beforeMathModules = Boolean(mathStartPage) && pageNumber < mathStartPage;
+
+  if (!isMathPage && !modelSaysMath && beforeMathModules && startRow >= FIRST_MATH_ROW) {
+    notes.push(`⚠️ Reading and Writing has already filled its ${RW_QUESTION_COUNT} slots; dropping ${questions.length} further question(s) rather than pushing math out of its block.`);
+    for (const q of questions) notes.push(`     dropped: ${String(q.question || '').slice(0, 70)}`);
+    return { action: 'skip', reason: `Reading and Writing overran ${RW_QUESTION_COUNT} questions`, isMathPage, notes };
+  }
+
+  if (startRow > window.last) {
+    notes.push(`⏹️  Row ${window.last} is full — stopping.`);
+    return { action: 'stop', reason: `past row ${window.last}`, isMathPage, notes };
+  }
+
+  const roomLeft = window.last - startRow + 1;
+  let write = questions;
+  if (questions.length > roomLeft) {
+    notes.push(`⏹️  Page holds ${questions.length} question(s) but only ${roomLeft} slot(s) remain before row ${window.last}; writing ${roomLeft} and dropping the rest.`);
+    write = questions.slice(0, roomLeft);
+  }
+
+  return {
+    action: 'write',
+    startRow,
+    isMathPage,
+    questions: write,
+    dropped: questions.length - write.length,
+    notes,
+  };
+}
+
+// Decide which row each of a page's questions claims, and where that leaves the
+// fallback cursor.
+//
+// The cursor is the row a question falls back to when its printed number is
+// unusable, so it has to track the rows actually taken. It used to advance by the
+// number of entries the page returned, which counted entries that claimed nothing
+// because their row was already occupied. Duplicates are common — the same
+// question can be read twice — and each one pushed the cursor a row further from
+// the truth. On one exam it reached the math block while the pages being read
+// were still Reading and Writing, and planPageWrite discarded 24 real questions
+// as Reading and Writing overrun.
+//
+// `taken` is the rows already claimed elsewhere; it is only read, never written.
+export function placeQuestions({ rows, questions, startRow, isMathPage, assignRow, taken, scope = EXAM_SCOPE.BOTH }) {
+  const claims = [];
+  const notes = [];
+  const claimedHere = new Set();
+  let highestClaimed = startRow - 1;
+
+  rows.forEach((values, i) => {
+    const q = questions[i] || {};
+    const exact = assignRow(q.question_number, questionIsMath(q, isMathPage, scope));
+    const target = exact || startRow + i;
+
+    if (exact && exact !== startRow + i) {
+      notes.push(`↪️  Question ${q.question_number} belongs in row ${exact}, not ${startRow + i}; using the printed number.`);
+    }
+    if (taken.has(target) || claimedHere.has(target)) {
+      notes.push(`⚠️ Row ${target} already holds a question; keeping the first and skipping this one.`);
+      return;
+    }
+
+    claims.push({ row: target, values });
+    claimedHere.add(target);
+    highestClaimed = Math.max(highestClaimed, target);
+  });
+
+  return { claims, notes, nextCursor: highestClaimed + 1 };
+}
+
+// Line the classifier's output up with the rows it describes.
+//
+// Classifications used to be appended as one contiguous block starting wherever
+// column K ran out, which held only while every row was filled in order. Two
+// things break that: a question that failed to transcribe leaves its row empty
+// and was skipped without a placeholder, shifting every classification below it
+// up a row; and math rows are left blank on purpose, so counting non-empty cells
+// finds the wrong place to start. Addressing rows explicitly fixes both.
+export function alignClassifications(results = []) {
+  const placed = results.filter((r) => Number.isInteger(r?.row) && r.row >= 2);
+  if (!placed.length) return { startRow: 2, values: [] };
+
+  const startRow = Math.min(...placed.map((r) => r.row));
+  const lastRow = Math.max(...placed.map((r) => r.row));
+  const values = Array.from({ length: lastRow - startRow + 1 }, () => ['', '', '']);
+
+  for (const r of placed) {
+    values[r.row - startRow] = [
+      r.passageType || '', r.questionType || '', r.difficultyLevel || '',
+    ];
+  }
+  return { startRow, values };
+}
+
+// Stitch page-break splits back into one question.
+//
+// A question whose choices fall on the next page used to become two rows: the
+// page it starts on gives the passage and stem, the next page gives the orphaned
+// choices, which the model then dressed up as a fresh question. Four such splits
+// in one exam pushed Reading and Writing to 58 questions and shoved math out of
+// its block. Continuation entries are folded into the question they belong to
+// before anything is counted or written.
+// An orphaned block of answer choices, recognised by shape rather than by the
+// model admitting to it. A real question always opens with its prompt; text that
+// opens directly with "A)" or "C)" is the tail of the question before it. The
+// model marks continues_previous_page only sometimes, and in the math section
+// hardly ever, so this catches the rest.
+export function isOrphanChoiceBlock(q) {
+  const text = String(q.question || q.passage || '').trim();
+  if (!text) return false;
+  if (!/^[A-D]\)/.test(text)) return false;
+  // Two or more markers: a single "A) ..." line could be a genuine short answer.
+  return (text.match(/(?:^|\s)[A-D]\)/g) || []).length >= 2;
+}
+
+export function mergePageContinuations(pages) {
+  let merged = 0;
+  const out = pages.map((page) => ({ ...page }));
+  let lastQuestion = null;
+
+  for (const page of out) {
+    if (!page.questions) continue; // a page that failed to transcribe
+    const kept = [];
+
+    for (const q of page.questions) {
+      if ((q.continues_previous_page || isOrphanChoiceBlock(q)) && lastQuestion) {
+        // Only a question that is actually missing choices can absorb a tail.
+        // The model sometimes flags a continuation on a page whose questions are
+        // already complete; merging that blindly overwrote a finished question's
+        // choices with text from an unrelated one — a hermit crab question ended
+        // up with "C) these" from a grammar question two pages away.
+        const headSoFar = extractChoices(lastQuestion.question || '');
+        const tailSoFar = extractChoices(String(q.question || q.passage || ''));
+        const headComplete = LETTERS.every((letter) => headSoFar.choices[letter]);
+        const tailAddsSomething = LETTERS.some(
+          (letter) => tailSoFar.choices[letter] && !headSoFar.choices[letter],
+        );
+
+        if (headComplete || !tailAddsSomething) {
+          console.warn(`⚠️ Ignoring a continuation that would overwrite a complete question: ${String(q.question || '').slice(0, 50)}`);
+          continue; // drop the stray tail, leave the good question alone
+        }
+
+        // The tail carries the real choices; the head may have invented some.
+        const tailText = String(q.question || q.passage || '').trim();
+        if (tailText) {
+          // Take the union letter by letter. A page can break after A, leaving the
+          // head holding A and the tail holding B, C and D — replacing the head's
+          // choices wholesale would throw A away.
+          const headParts = extractChoices(lastQuestion.question || '');
+          const tailParts = extractChoices(tailText);
+          const combined = LETTERS
+            .map((letter) => {
+              const value = tailParts.choices[letter] || headParts.choices[letter];
+              return value ? `${letter}) ${value}` : '';
+            })
+            .filter(Boolean);
+
+          const stem = headParts.stem || tailParts.stem;
+          lastQuestion.question = combined.length ? `${stem}\n\n${combined.join('\n')}` : stem;
+        }
+        if (q.correct_answer) lastQuestion.correct_answer = q.correct_answer;
+        merged += 1;
+        continue;
+      }
+      kept.push(q);
+      lastQuestion = q;
+    }
+
+    page.questions = kept;
+  }
+
+  if (merged) {
+    console.log(`🔗 Rejoined ${merged} question(s) split across a page break.`);
+  }
+  return out;
+}
+
+// Recover the answer letter from whatever the model returned.
+//
+// The prompt asks for a bare letter, but in practice the answer comes back as
+// the choice's text ("26/49"), the text with its letter ("B) Ultimately,"), or a
+// LaTeX expression. Since the choices are already parsed, the letter can be
+// worked out instead of trusted. A question with no choices is a student-produced
+// response, where the value itself is the answer and is left alone.
+const CHOICE_LETTERS = ['A', 'B', 'C', 'D'];
+
+function normaliseForCompare(value) {
+  return String(value ?? '')
+    .replace(/\$/g, '')       // LaTeX delimiters carry no meaning
+    .replace(/\\/g, '')       // \cos becomes cos, keeping the command word:
+                              // stripping the whole command made "cos L > sin K"
+                              // and "cos L = sin K" identical, and the answer was
+                              // then confidently assigned to the wrong choice
+    .replace(/[\s,]+/g, ' ')
+    .replace(/[^\w\s./()^+\-<>=]/g, '') // keep relational operators
+    .trim()
+    .toLowerCase();
+}
+
+export function normaliseAnswer(rawAnswer, choices = []) {
+  const answer = String(rawAnswer ?? '').trim();
+  if (!answer) return { answer: '', matched: false };
+
+  const hasChoices = choices.some((c) => String(c ?? '').trim());
+  if (!hasChoices) return { answer, matched: true }; // student-produced response
+
+  if (/^[A-D]$/i.test(answer)) return { answer: answer.toUpperCase(), matched: true };
+
+  // "B) text", "B. text", "B - text"
+  const prefixed = answer.match(/^([A-D])\s*[).:\-–]/i);
+  if (prefixed) return { answer: prefixed[1].toUpperCase(), matched: true };
+
+  const target = normaliseForCompare(answer);
+  if (target) {
+    // A match only counts when exactly one choice matches. Two choices that
+    // normalise the same way mean the comparison has lost the distinction.
+    const exact = choices
+      .map((c, i) => (normaliseForCompare(c) === target ? i : -1))
+      .filter((i) => i !== -1);
+    if (exact.length === 1) return { answer: CHOICE_LETTERS[exact[0]], matched: true };
+    if (exact.length > 1) return { answer, matched: false };
+
+    const contained = choices
+      .map((c, i) => (normaliseForCompare(c) && normaliseForCompare(c).includes(target) ? i : -1))
+      .filter((i) => i !== -1);
+    if (contained.length === 1) return { answer: CHOICE_LETTERS[contained[0]], matched: true };
+  }
+
+  // Nothing lined up — hand it back untouched so the caller can say so.
+  return { answer, matched: false };
+}
+
+// Place a question by the number printed beside it, not by how many came before.
+//
+// Sequential filling meant one lost or duplicated question shifted every row
+// after it: when the first math question was dropped, all 43 that followed
+// landed one row early and no longer matched their pre-filled numbers. The
+// transcriber now reports the printed number, so each question can go straight
+// to its slot and a gap stays a gap.
+// How much of a module must have been seen before a return to question 1 or 2 is
+// believed to be the next module rather than a stray out-of-order number.
+const MODULE_RESTART_AFTER = 15;
+
+export const RW_PER_MODULE = 27;
+export const MATH_PER_MODULE = 22;
+
+export function createRowAssigner() {
+  const state = {
+    rw: { highestSeen: 0, moduleIndex: 0 },
+    math: { highestSeen: 0, moduleIndex: 0 },
+  };
+
+  // Returns the row for a question, or null when the number is unusable and the
+  // caller should fall back to the running cursor.
+  return function assignRow(questionNumber, isMath) {
+    const section = isMath ? state.math : state.rw;
+    const number = Number(questionNumber);
+    if (!Number.isInteger(number) || number < 1) return null;
+
+    const perModule = isMath ? MATH_PER_MODULE : RW_PER_MODULE;
+    if (number > perModule) return null; // not a number this template can hold
+
+    // Numbers restart in the second module, which is how the module change is
+    // detected — there is no other marker in the transcription.
+    //
+    // Any decrease used to count as a restart, and that was far too fragile: one
+    // out-of-order number early in module 1 bumped the counter, and every question
+    // after it landed in module 2's block while module 1's rows stayed empty.
+    // A real boundary is a return to the START of a module after most of the
+    // previous one has been seen, so both conditions are required.
+    const looksLikeRestart = number <= 2 && section.highestSeen >= MODULE_RESTART_AFTER;
+    if (looksLikeRestart) {
+      section.moduleIndex += 1;
+      section.highestSeen = 0;
+    }
+    section.highestSeen = Math.max(section.highestSeen, number);
+
+    if (section.moduleIndex > 1) return null; // a third module means something is wrong
+
+    const base = isMath ? FIRST_MATH_ROW : 2;
+    return base + section.moduleIndex * perModule + (number - 1);
+  };
+}

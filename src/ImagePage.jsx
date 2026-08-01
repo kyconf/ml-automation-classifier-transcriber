@@ -1,14 +1,15 @@
 import React, { useState } from 'react';
-import { AlertTriangle } from 'lucide-react';
+import { ArrowDownAZ } from 'lucide-react';
 import { API_BASE } from './config';
 import { useApp } from './AppContext';
-import { Page, Card } from './components/Layout';
+import { Page, Card, Note, AnswerKeyNote, ExamScopeField, useExamScope } from './components/Layout';
 import { DropZone, FolderFallback } from './components/DropZone';
 
 function ImagePage() {
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const { setBusy, toast } = useApp();
+  const scope = useExamScope();
 
   // Images are staged first, then transcribed in one go so the whole batch lands
   // in a single sheet rather than one sheet per image.
@@ -31,7 +32,11 @@ function ImagePage() {
 
       files.forEach((f) => report(f.name, 'working', 'transcribing…'));
 
-      const response = await fetch(`${API_BASE}/transcribe-uploaded`, { method: 'POST' });
+      const response = await fetch(`${API_BASE}/transcribe-uploaded`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ readingWriting: scope.readingWriting, math: scope.math }),
+      });
       const data = await response.json();
 
       if (response.ok && data.success) {
@@ -79,10 +84,12 @@ function ImagePage() {
   return (
     <Page title="Image Transcription" subtitle="Drop question images to transcribe them into a new sheet." connection="image">
       <Card className="mx-auto max-w-lg">
+        <ExamScopeField scope={scope} disabled={uploading || loading} />
+
         <DropZone
           accept=".png,.jpg,.jpeg"
           multiple
-          busy={uploading || loading}
+          busy={uploading || loading || !scope.valid}
           label="Drop question images here"
           onFiles={handleDroppedImages}
         />
@@ -91,13 +98,15 @@ function ImagePage() {
           All dropped images are transcribed together into one new sheet, in filename order.
         </p>
 
-        <FolderFallback onClick={handleTranscribe} loading={loading}>
+        <FolderFallback onClick={handleTranscribe} loading={loading || !scope.valid}>
           {loading ? 'Transcribing…' : 'Transcribe from Drive folder'}
         </FolderFallback>
 
-        <div className="mt-6 flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
-          <AlertTriangle size={14} />
-          Images are processed in filename order, so name them accordingly.
+        <div className="mt-6 space-y-2">
+          <AnswerKeyNote />
+          <Note icon={ArrowDownAZ}>
+            Images are processed in filename order, so name them accordingly.
+          </Note>
         </div>
       </Card>
     </Page>

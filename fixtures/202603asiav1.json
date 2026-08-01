@@ -1,0 +1,790 @@
+{
+  "pdf": "202603asiav1.pdf",
+  "note": "Transcribed from the answer key printed on pages 34-36 of the PDF itself, not from any pipeline output. Row = the template slot the question belongs in: R&W module 1 -> 2-28, module 2 -> 29-55, Math module 1 -> 56-77, module 2 -> 78-99. Only row and section are asserted. The correct answer is kept as \"printedAnswer\", which the scorer ignores on purpose: transcription no longer fills column J at all, so scoring it would report 0% and say nothing about how well the pages were read. Use printedAnswer to fill column J by hand or with the Answer Key Transcriber.",
+  "questions": [
+    {
+      "row": 2,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 1,
+      "printedAnswer": "A"
+    },
+    {
+      "row": 3,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 2,
+      "printedAnswer": "C"
+    },
+    {
+      "row": 4,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 3,
+      "printedAnswer": "A"
+    },
+    {
+      "row": 5,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 4,
+      "printedAnswer": "D"
+    },
+    {
+      "row": 6,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 5,
+      "printedAnswer": "C"
+    },
+    {
+      "row": 7,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 6,
+      "printedAnswer": "B"
+    },
+    {
+      "row": 8,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 7,
+      "printedAnswer": "B"
+    },
+    {
+      "row": 9,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 8,
+      "printedAnswer": "B"
+    },
+    {
+      "row": 10,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 9,
+      "printedAnswer": "C"
+    },
+    {
+      "row": 11,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 10,
+      "printedAnswer": "C"
+    },
+    {
+      "row": 12,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 11,
+      "printedAnswer": "C"
+    },
+    {
+      "row": 13,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 12,
+      "printedAnswer": "D"
+    },
+    {
+      "row": 14,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 13,
+      "printedAnswer": "D"
+    },
+    {
+      "row": 15,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 14,
+      "printedAnswer": "D"
+    },
+    {
+      "row": 16,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 15,
+      "printedAnswer": "B"
+    },
+    {
+      "row": 17,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 16,
+      "printedAnswer": "B"
+    },
+    {
+      "row": 18,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 17,
+      "printedAnswer": "B"
+    },
+    {
+      "row": 19,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 18,
+      "printedAnswer": "A"
+    },
+    {
+      "row": 20,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 19,
+      "printedAnswer": "C"
+    },
+    {
+      "row": 21,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 20,
+      "printedAnswer": "D"
+    },
+    {
+      "row": 22,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 21,
+      "printedAnswer": "D"
+    },
+    {
+      "row": 23,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 22,
+      "printedAnswer": "C"
+    },
+    {
+      "row": 24,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 23,
+      "printedAnswer": "D"
+    },
+    {
+      "row": 25,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 24,
+      "printedAnswer": "D"
+    },
+    {
+      "row": 26,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 25,
+      "printedAnswer": "B"
+    },
+    {
+      "row": 27,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 26,
+      "printedAnswer": "A"
+    },
+    {
+      "row": 28,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 27,
+      "printedAnswer": "C"
+    },
+    {
+      "row": 29,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 1,
+      "printedAnswer": "B"
+    },
+    {
+      "row": 30,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 2,
+      "printedAnswer": "C"
+    },
+    {
+      "row": 31,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 3,
+      "printedAnswer": "A"
+    },
+    {
+      "row": 32,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 4,
+      "printedAnswer": "B"
+    },
+    {
+      "row": 33,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 5,
+      "printedAnswer": "C"
+    },
+    {
+      "row": 34,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 6,
+      "printedAnswer": "D"
+    },
+    {
+      "row": 35,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 7,
+      "printedAnswer": "C"
+    },
+    {
+      "row": 36,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 8,
+      "printedAnswer": "A"
+    },
+    {
+      "row": 37,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 9,
+      "printedAnswer": "A"
+    },
+    {
+      "row": 38,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 10,
+      "printedAnswer": "B"
+    },
+    {
+      "row": 39,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 11,
+      "printedAnswer": "B"
+    },
+    {
+      "row": 40,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 12,
+      "printedAnswer": "D"
+    },
+    {
+      "row": 41,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 13,
+      "printedAnswer": "C"
+    },
+    {
+      "row": 42,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 14,
+      "printedAnswer": "C"
+    },
+    {
+      "row": 43,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 15,
+      "printedAnswer": "C"
+    },
+    {
+      "row": 44,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 16,
+      "printedAnswer": "C"
+    },
+    {
+      "row": 45,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 17,
+      "printedAnswer": "C"
+    },
+    {
+      "row": 46,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 18,
+      "printedAnswer": "B"
+    },
+    {
+      "row": 47,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 19,
+      "printedAnswer": "A"
+    },
+    {
+      "row": 48,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 20,
+      "printedAnswer": "A"
+    },
+    {
+      "row": 49,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 21,
+      "printedAnswer": "D"
+    },
+    {
+      "row": 50,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 22,
+      "printedAnswer": "B"
+    },
+    {
+      "row": 51,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 23,
+      "printedAnswer": "A"
+    },
+    {
+      "row": 52,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 24,
+      "printedAnswer": "A"
+    },
+    {
+      "row": 53,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 25,
+      "printedAnswer": "C"
+    },
+    {
+      "row": 54,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 26,
+      "printedAnswer": "C"
+    },
+    {
+      "row": 55,
+      "verified": true,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 27,
+      "printedAnswer": "A"
+    },
+    {
+      "row": 56,
+      "verified": true,
+      "section": "Math",
+      "module": 1,
+      "number": 1,
+      "printedAnswer": "560"
+    },
+    {
+      "row": 57,
+      "verified": true,
+      "section": "Math",
+      "module": 1,
+      "number": 2,
+      "printedAnswer": "B"
+    },
+    {
+      "row": 58,
+      "verified": true,
+      "section": "Math",
+      "module": 1,
+      "number": 3,
+      "printedAnswer": "B"
+    },
+    {
+      "row": 59,
+      "verified": true,
+      "section": "Math",
+      "module": 1,
+      "number": 4,
+      "printedAnswer": "B"
+    },
+    {
+      "row": 60,
+      "verified": true,
+      "section": "Math",
+      "module": 1,
+      "number": 5,
+      "printedAnswer": "5900"
+    },
+    {
+      "row": 61,
+      "verified": true,
+      "section": "Math",
+      "module": 1,
+      "number": 6,
+      "printedAnswer": "1.2"
+    },
+    {
+      "row": 62,
+      "verified": true,
+      "section": "Math",
+      "module": 1,
+      "number": 7,
+      "printedAnswer": "D"
+    },
+    {
+      "row": 63,
+      "verified": true,
+      "section": "Math",
+      "module": 1,
+      "number": 8,
+      "printedAnswer": "B"
+    },
+    {
+      "row": 64,
+      "verified": true,
+      "section": "Math",
+      "module": 1,
+      "number": 9,
+      "printedAnswer": "208"
+    },
+    {
+      "row": 65,
+      "verified": true,
+      "section": "Math",
+      "module": 1,
+      "number": 10,
+      "printedAnswer": "15"
+    },
+    {
+      "row": 66,
+      "verified": true,
+      "section": "Math",
+      "module": 1,
+      "number": 11,
+      "printedAnswer": "B"
+    },
+    {
+      "row": 67,
+      "verified": true,
+      "section": "Math",
+      "module": 1,
+      "number": 12,
+      "printedAnswer": "C"
+    },
+    {
+      "row": 68,
+      "verified": true,
+      "section": "Math",
+      "module": 1,
+      "number": 13,
+      "printedAnswer": "C"
+    },
+    {
+      "row": 69,
+      "verified": true,
+      "section": "Math",
+      "module": 1,
+      "number": 14,
+      "printedAnswer": "C"
+    },
+    {
+      "row": 70,
+      "verified": true,
+      "section": "Math",
+      "module": 1,
+      "number": 15,
+      "printedAnswer": "D"
+    },
+    {
+      "row": 71,
+      "verified": true,
+      "section": "Math",
+      "module": 1,
+      "number": 16,
+      "printedAnswer": "10"
+    },
+    {
+      "row": 72,
+      "verified": true,
+      "section": "Math",
+      "module": 1,
+      "number": 17,
+      "printedAnswer": "A"
+    },
+    {
+      "row": 73,
+      "verified": true,
+      "section": "Math",
+      "module": 1,
+      "number": 18,
+      "printedAnswer": "B"
+    },
+    {
+      "row": 74,
+      "verified": true,
+      "section": "Math",
+      "module": 1,
+      "number": 19,
+      "printedAnswer": "D"
+    },
+    {
+      "row": 75,
+      "verified": true,
+      "section": "Math",
+      "module": 1,
+      "number": 20,
+      "printedAnswer": "485"
+    },
+    {
+      "row": 76,
+      "verified": true,
+      "section": "Math",
+      "module": 1,
+      "number": 21,
+      "printedAnswer": "A"
+    },
+    {
+      "row": 77,
+      "verified": true,
+      "section": "Math",
+      "module": 1,
+      "number": 22,
+      "printedAnswer": "A"
+    },
+    {
+      "row": 78,
+      "verified": true,
+      "section": "Math",
+      "module": 2,
+      "number": 1,
+      "printedAnswer": "D"
+    },
+    {
+      "row": 79,
+      "verified": true,
+      "section": "Math",
+      "module": 2,
+      "number": 2,
+      "printedAnswer": "A"
+    },
+    {
+      "row": 80,
+      "verified": true,
+      "section": "Math",
+      "module": 2,
+      "number": 3,
+      "printedAnswer": "D"
+    },
+    {
+      "row": 81,
+      "verified": true,
+      "section": "Math",
+      "module": 2,
+      "number": 4,
+      "printedAnswer": "26"
+    },
+    {
+      "row": 82,
+      "verified": true,
+      "section": "Math",
+      "module": 2,
+      "number": 5,
+      "printedAnswer": "B"
+    },
+    {
+      "row": 83,
+      "verified": true,
+      "section": "Math",
+      "module": 2,
+      "number": 6,
+      "printedAnswer": "C"
+    },
+    {
+      "row": 84,
+      "verified": true,
+      "section": "Math",
+      "module": 2,
+      "number": 7,
+      "printedAnswer": "C"
+    },
+    {
+      "row": 85,
+      "verified": true,
+      "section": "Math",
+      "module": 2,
+      "number": 8,
+      "printedAnswer": "11"
+    },
+    {
+      "row": 86,
+      "verified": true,
+      "section": "Math",
+      "module": 2,
+      "number": 9,
+      "printedAnswer": "A"
+    },
+    {
+      "row": 87,
+      "verified": true,
+      "section": "Math",
+      "module": 2,
+      "number": 10,
+      "printedAnswer": "A"
+    },
+    {
+      "row": 88,
+      "verified": true,
+      "section": "Math",
+      "module": 2,
+      "number": 11,
+      "printedAnswer": "D"
+    },
+    {
+      "row": 89,
+      "verified": true,
+      "section": "Math",
+      "module": 2,
+      "number": 12,
+      "printedAnswer": "B"
+    },
+    {
+      "row": 90,
+      "verified": true,
+      "section": "Math",
+      "module": 2,
+      "number": 13,
+      "printedAnswer": "A"
+    },
+    {
+      "row": 91,
+      "verified": true,
+      "section": "Math",
+      "module": 2,
+      "number": 14,
+      "printedAnswer": "-21"
+    },
+    {
+      "row": 92,
+      "verified": true,
+      "section": "Math",
+      "module": 2,
+      "number": 15,
+      "printedAnswer": "D"
+    },
+    {
+      "row": 93,
+      "verified": true,
+      "section": "Math",
+      "module": 2,
+      "number": 16,
+      "printedAnswer": "B"
+    },
+    {
+      "row": 94,
+      "verified": true,
+      "section": "Math",
+      "module": 2,
+      "number": 17,
+      "printedAnswer": "B"
+    },
+    {
+      "row": 95,
+      "verified": true,
+      "section": "Math",
+      "module": 2,
+      "number": 18,
+      "printedAnswer": "A"
+    },
+    {
+      "row": 96,
+      "verified": true,
+      "section": "Math",
+      "module": 2,
+      "number": 19,
+      "printedAnswer": "5.5"
+    },
+    {
+      "row": 97,
+      "verified": true,
+      "section": "Math",
+      "module": 2,
+      "number": 20,
+      "printedAnswer": "C"
+    },
+    {
+      "row": 98,
+      "verified": true,
+      "section": "Math",
+      "module": 2,
+      "number": 21,
+      "printedAnswer": "275"
+    },
+    {
+      "row": 99,
+      "verified": true,
+      "section": "Math",
+      "module": 2,
+      "number": 22,
+      "printedAnswer": "D"
+    }
+  ]
+}

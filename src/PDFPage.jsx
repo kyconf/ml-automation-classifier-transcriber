@@ -1,14 +1,15 @@
 import React, { useState } from 'react';
-import { AlertTriangle } from 'lucide-react';
+import { Clock } from 'lucide-react';
 import { API_BASE } from './config';
 import { useApp } from './AppContext';
-import { Page, Card } from './components/Layout';
+import { Page, Card, Note, AnswerKeyNote, ExamScopeField, useExamScope } from './components/Layout';
 import { DropZone, FolderFallback } from './components/DropZone';
 
 function PDFPage() {
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const { setBusy, toast } = useApp();
+  const scope = useExamScope();
 
   // Dropped PDFs are sent one at a time so each gets its own sheet and its own
   // line of feedback; a 50-page exam takes a while and silence is unnerving.
@@ -20,7 +21,12 @@ function PDFPage() {
     for (const file of files) {
       report(file.name, 'working', 'transcribing…');
       try {
-        const response = await fetch(`${API_BASE}/upload-pdf?name=${encodeURIComponent(file.name)}`, {
+        const query = new URLSearchParams({
+          name: file.name,
+          readingWriting: String(scope.readingWriting),
+          math: String(scope.math),
+        });
+        const response = await fetch(`${API_BASE}/upload-pdf?${query}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/pdf' },
           body: file,
@@ -54,6 +60,7 @@ function PDFPage() {
       const response = await fetch(`${API_BASE}/process-pdf`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ readingWriting: scope.readingWriting, math: scope.math }),
       });
       const data = await response.json();
 
@@ -74,10 +81,12 @@ function PDFPage() {
   return (
     <Page title="PDF Transcription" subtitle="Drop an exam PDF to transcribe every question into a new sheet." connection="pdf">
       <Card className="mx-auto max-w-lg">
+        <ExamScopeField scope={scope} disabled={uploading || loading} />
+
         <DropZone
           accept=".pdf"
           multiple
-          busy={uploading || loading}
+          busy={uploading || loading || !scope.valid}
           label="Drop PDF exams here"
           onFiles={handleDroppedPDFs}
         />
@@ -86,13 +95,15 @@ function PDFPage() {
           Each page is converted to an image, transcribed, classified, and written to your sheet.
         </p>
 
-        <FolderFallback onClick={handleProcessPDFs} loading={loading}>
+        <FolderFallback onClick={handleProcessPDFs} loading={loading || !scope.valid}>
           {loading ? 'Processing…' : 'Transcribe from Drive folder'}
         </FolderFallback>
 
-        <div className="mt-6 flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
-          <AlertTriangle size={14} />
-          Large exams can take several minutes. Leave this tab open.
+        <div className="mt-6 space-y-2">
+          <AnswerKeyNote />
+          <Note icon={Clock}>
+            Large exams can take several minutes. Leave this tab open.
+          </Note>
         </div>
       </Card>
     </Page>

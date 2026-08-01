@@ -1,7 +1,7 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FileImage, FileText, Sparkles, RefreshCw, ArrowRight } from 'lucide-react';
-import { Page } from './components/Layout';
+import { Page, AnswerKeyNote } from './components/Layout';
 
 const STEPS = [
   { path: '/pdf', icon: FileText, title: 'PDF', desc: 'Convert a PDF exam to images and transcribe every question.' },
@@ -33,6 +33,8 @@ function RWPage() {
           </button>
         ))}
       </div>
+
+      <AnswerKeyNote className="mx-auto mt-6 max-w-3xl" />
     </Page>
   );
 }

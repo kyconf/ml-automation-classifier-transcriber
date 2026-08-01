@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
   FileImage, FileText, Sparkles, RefreshCw,
-  ScanText, Settings as SettingsIcon,
+  ScanText, Settings as SettingsIcon, BookOpen, KeyRound,
 } from 'lucide-react';
 import { useApp } from './AppContext';
 import Settings, { ipc } from './Settings';
@@ -10,6 +10,7 @@ import Settings, { ipc } from './Settings';
 const NAV_ITEMS = [
   { path: '/image', label: 'Image', icon: FileImage },
   { path: '/pdf', label: 'PDF', icon: FileText },
+  { path: '/answer-key', label: 'Answer Key', icon: KeyRound },
   { path: '/generate', label: 'Generate', icon: Sparkles },
   { path: '/regenerate', label: 'Regenerate', icon: RefreshCw },
 ];
@@ -73,6 +74,18 @@ function Sidebar() {
       </nav>
 
       <div className="mt-auto border-t border-slate-800 p-3">
+        <button
+          onClick={() => navigate('/how-to-use')}
+          disabled={busy}
+          className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+            location.pathname === '/how-to-use'
+              ? 'bg-indigo-600/15 text-indigo-300'
+              : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+          }`}
+        >
+          <BookOpen size={18} />
+          How to use
+        </button>
         <button
           onClick={() => setShowSettings(true)}
           className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-300 transition-colors hover:bg-slate-800 hover:text-white"

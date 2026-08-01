@@ -1,0 +1,15 @@
+{
+  "watch": ["server.js", "lib"],
+  "ext": "js,mjs,json",
+  "ignore": [
+    "run-logs/*",
+    "converted_images/*",
+    ".transcription-cache/*",
+    "tests/*",
+    "tools/*",
+    "src/*",
+    "*.xlsx",
+    "*.log"
+  ],
+  "delay": 1000
+}

@@ -17,8 +17,24 @@ import {
   sectionFor, pageIsMath, pageNumberFromImage, questionHasChoiceGraphs,
   parseQuestion, cleanJsonResponse, unwrapQuestions, parseTranscriptionResponse,
   mapWithConcurrency, reportRunHealth, planPageWrite, mergePageContinuations, isOrphanChoiceBlock, createRowAssigner,
-  normaliseAnswer, salvageQuestionFields,
+  salvageQuestionFields, alignClassifications,
+  stripAnswerKeyEntries, placeQuestions, formatRowReport, rejoinDanglingNumbers,
+  EXAM_SCOPE, rowWindowFor,
+  ANSWER_KEY_MODULES, answerKeyModulesFor, parseAnswerKeyResponse, placeAnswerKey,
 } from './lib/pipeline.js';
+
+// "Which modules are in this file?" comes from the UI checkboxes. Both ticked (or
+// nothing sent, which is what the Drive-folder flow does) means a whole exam.
+function scopeFromRequest(source = {}) {
+  const rw = source.readingWriting;
+  const math = source.math;
+  const wants = (v) => v === true || v === 'true' || v === '1';
+
+  if (rw === undefined && math === undefined) return EXAM_SCOPE.BOTH;
+  if (wants(math) && !wants(rw)) return EXAM_SCOPE.MATH;
+  if (wants(rw) && !wants(math)) return EXAM_SCOPE.RW;
+  return EXAM_SCOPE.BOTH;
+}
 
 import express, { response } from 'express';
 import cors from 'cors';
@@ -383,9 +399,14 @@ async function createDefault(spreadsheetId) {
 
 // Next free row, found by counting how far column C is filled.
 async function getNextRow(sheetName) {
+  // Column E (content), not column C (section). C is filled for all 98 template
+  // rows when the sheet is created, so counting it returns 100 on an empty sheet
+  // and every page is then discarded as "Reading and Writing overran". E holds
+  // the question stem and is written by nothing but a transcription, so it is
+  // what actually means "a question is already here".
   const colCheck = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${sheetName}!C:C`,
+    range: `${sheetName}!E:E`,
   });
   const existingRows = colCheck.data.values || [];
   return Math.max(2, existingRows.length + 1);
@@ -453,21 +474,18 @@ async function appendToSheet(values, sheetName, startRow) {
   }
 }
 
-async function TwiceToSheet(values, sheetName) {
+// `startRow` is the sheet row the first entry in `values` belongs to. It used to
+// be found by counting non-empty cells in column K, which silently assumed the
+// classifications were a gapless block — they are not, now that math rows are
+// left blank and a failed question leaves its row empty.
+async function TwiceToSheet(values, sheetName, startRow = 2) {
   if (!sheetName) {
     console.error('Sheet name is undefined. Please provide a valid sheet name.');
     return;
   }
 
   try {
-    // Find the actual next empty row in column K
-    const colCheck = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_ID,
-      range: `${sheetName}!K:K`,
-    });
-    const existingRows = colCheck.data.values || [];
-    const nextRow = Math.max(2, existingRows.length + 1);
-
+    const nextRow = Math.max(2, startRow);
     const targetRange = `${sheetName}!K${nextRow}`;
 
     const request = {
@@ -740,7 +758,8 @@ const CACHE_DIR = process.env.APP_DATA_DIR
 // Resolve the pdftocairo (poppler) binary in a cross-platform way.
 // Precedence: POPPLER_PATH env > bundled vendor binary > common system paths > PATH.
 function resolvePdftocairo() {
-  const binName = process.platform === 'win32' ? 'pdftocairo.exe' : 'pdftocairo';
+  const tool = 'pdftocairo';
+  const binName = process.platform === 'win32' ? `${tool}.exe` : tool;
 
   // 1. Explicit override
   if (process.env.POPPLER_PATH) {
@@ -781,8 +800,31 @@ function resolvePdftocairo() {
   }
 
   // 5. Last resort: rely on PATH
-  console.warn('⚠️ pdftocairo not found in vendor/ or common paths; falling back to PATH.');
+  console.warn(`⚠️ ${tool} not found in vendor/ or common paths; falling back to PATH.`);
   return binName;
+}
+
+// Practice exams print the answer key after the last question. It must never be
+// transcribed, so the pages it occupies are dropped before anything else sees
+// them. The page the key BEGINS on is kept: on a print-style exam the key starts
+// partway down a page that still holds real questions, and skipping it outright
+// would cost them. What comes back from that page is filtered by
+// stripAnswerKeyEntries, which is also the whole defence when this page number is
+// wrong or missing.
+//
+// The page number comes from the structure pass rather than the PDF's text layer:
+// every sample exam is a PDF of page images with no text in it at all — asiav1 has
+// 36 chars across 36 pages — so pdftotext returns nothing to search.
+function dropAnswerKeyPages(images, answerKeyPage) {
+  if (!answerKeyPage) return images;
+
+  // Everything strictly after the page the key starts on is key and nothing else.
+  const kept = images.filter((image) => (pageNumberFromImage(image) || 0) <= answerKeyPage);
+  const removed = images.length - kept.length;
+  if (!removed) return images;
+
+  console.log(`🔒 Answer key starts on page ${answerKeyPage}; skipping ${removed} page(s) of pure key.`);
+  return kept;
 }
 
 // Convert PDF to Images
@@ -900,6 +942,11 @@ const LOG_DIR = process.env.APP_DATA_DIR
   ? path.join(process.env.APP_DATA_DIR, 'run-logs')
   : path.join(__dirname, 'run-logs');
 
+// Exported spreadsheets are kept here so `npm run score` has something to read.
+const EXPORTS_DIR = process.env.APP_DATA_DIR
+  ? path.join(process.env.APP_DATA_DIR, 'exports')
+  : path.join(__dirname, 'exports');
+
 function startRunLog(displayName) {
   try {
     fs.mkdirSync(LOG_DIR, { recursive: true });
@@ -937,20 +984,25 @@ function startRunLog(displayName) {
 
 // Everything that happens to a single PDF once it is sitting on disk, whether it
 // arrived from the Drive folder or was dropped onto the app.
-async function processOnePdf(pdfFilePath, displayName, { archivePages = true } = {}) {
+async function processOnePdf(pdfFilePath, displayName, { archivePages = true, scope = EXAM_SCOPE.BOTH } = {}) {
   const stopLogging = startRunLog(displayName);
   try {
-    return await runOnePdf(pdfFilePath, displayName, { archivePages });
+    return await runOnePdf(pdfFilePath, displayName, { archivePages, scope });
   } finally {
     stopLogging();
   }
 }
 
-async function runOnePdf(pdfFilePath, displayName, { archivePages = true } = {}) {
+async function runOnePdf(pdfFilePath, displayName, { archivePages = true, scope = EXAM_SCOPE.BOTH } = {}) {
   const sheetName = displayName.replace(/\.pdf$/i, '');
   const newSheetName = await createDefaultSheet(SPREADSHEET_ID, sheetName);
 
-  const images = await convertPdfToImages(pdfFilePath, OUTPUT_DIR);
+  const allPages = await convertPdfToImages(pdfFilePath, OUTPUT_DIR);
+
+  // The structure pass runs before the archive upload so the answer key pages are
+  // dropped once, here, and nothing downstream ever sees them.
+  const { mathStartPage, answerKeyPage, expected } = await detectMathStartPage(pdfFilePath);
+  const images = dropAnswerKeyPages(allPages, answerKeyPage);
 
   // Page images are copied to Drive purely as an archive of what was read; the
   // transcription itself works from the local files. For a dropped PDF that is
@@ -966,13 +1018,12 @@ async function runOnePdf(pdfFilePath, displayName, { archivePages = true } = {})
     console.log(`⏭️  Skipping the Drive copy of ${images.length} page image(s); transcribing locally.`);
   }
 
-  const { mathStartPage, expected } = await detectMathStartPage(pdfFilePath);
-  const responses = await transcribeImages(images, newSheetName, pdfFilePath, mathStartPage, expected);
+  const responses = await transcribeImages(images, newSheetName, pdfFilePath, mathStartPage, expected, scope);
 
   return { sheetName: newSheetName, responses };
 }
 
-async function processPdfAndUpload() {
+async function processPdfAndUpload(scope = EXAM_SCOPE.BOTH) {
   const failures = [];
   try {
     await clearProcessingQueue();
@@ -984,7 +1035,7 @@ async function processPdfAndUpload() {
       console.log(`Processing PDF file: ${pdfFile.name} (${pdfFile.id})`);
 
       const pdfFilePath = await downloadPdfFromDrive(pdfFile.id);
-      const { sheetName, responses } = await processOnePdf(pdfFilePath, pdfFile.name);
+      const { sheetName, responses } = await processOnePdf(pdfFilePath, pdfFile.name, { scope });
 
       for (const r of responses) {
         if (r.error) {
@@ -1022,7 +1073,12 @@ const TRANSCRIPTION_SCHEMA = {
         items: {
           type: 'object',
           additionalProperties: false,
-          required: ['question_number', 'continues_previous_page', 'section', 'passage', 'question', 'correct_answer'],
+          // No correct_answer. The transcriber is never shown an answer key, so
+          // asking for one made it solve every question itself — scored against
+          // the key printed in 202603asiav1.pdf, 17 of 95 came back right. It also
+          // spent effort on solving that should go into reading the page. Column J
+          // is left empty for the Answer Key Transcriber or for a person.
+          required: ['question_number', 'continues_previous_page', 'section', 'passage', 'question'],
           properties: {
             question_number: {
               type: ['integer', 'null'],
@@ -1035,7 +1091,6 @@ const TRANSCRIPTION_SCHEMA = {
             section: { type: 'string', enum: ['Reading and Writing', 'Math'] },
             passage: { type: 'string', description: 'Stimulus only. Empty string when there is none.' },
             question: { type: 'string', description: 'Prompt sentence, then the answer choices.' },
-            correct_answer: { type: 'string', description: 'A single letter A-D, or the answer value for a question with no choices.' },
           },
         },
       },
@@ -1052,11 +1107,16 @@ const STRUCTURE_SCHEMA = {
   schema: {
     type: 'object',
     additionalProperties: false,
-    required: ['math_start_page', 'questions_per_page', 'total_questions'],
+    required: ['math_start_page', 'answer_key_start_page', 'questions_per_page', 'total_questions'],
     properties: {
       math_start_page: {
         type: ['integer', 'null'],
         description: '1-based page number of the first page holding a math question.',
+      },
+      answer_key_start_page: {
+        type: ['integer', 'null'],
+        description: '1-based page number of the first page showing the answer key — a heading such as '
+          + '"Reading and Writing Module 1 Answers" above a numbered list of letters. Null if the exam has no key.',
       },
       questions_per_page: {
         type: ['integer', 'null'],
@@ -1158,6 +1218,12 @@ async function detectMathStartPage(pdfPath) {
         pages are dense with prose passages. Math pages are dominated by equations, numerals, geometric
         figures, and coordinate grids, and often carry a "Math" module heading.
         Identify the 1-based page number of the FIRST page that contains a Math question.
+        Many of these exams also print an ANSWER KEY after the last question: a large heading such as
+        "Reading and Writing Module 1 Answers" or "Math Module 2 Answers", followed by a narrow column of
+        numbered letters ("1. A", "2. C", ...) with no passages, no diagrams and no answer choices. Those
+        pages look conspicuously empty next to a question page. Report the 1-based page number of the FIRST
+        page on which the answer key appears — including a page that begins with real questions and only
+        turns into the key partway down. Use null if the exam has no answer key.
         Also report how many questions a page typically holds — use null if it varies from page to page —
         and how many questions the whole exam contains across both sections.`,
     }];
@@ -1174,6 +1240,23 @@ async function detectMathStartPage(pdfPath) {
 
     const parsed = parseTranscriptionResponse(await askModel(content, STRUCTURE_SCHEMA, STRUCTURE_MODEL))[0] || {};
     const page = Number(parsed.math_start_page);
+
+    // A key page at or before the math start would mean skipping half the exam,
+    // so an implausible answer is treated as no answer; stripAnswerKeyEntries
+    // still keeps the key out of the sheet.
+    const rawKeyPage = Number(parsed.answer_key_start_page);
+    const answerKeyPage = Number.isInteger(rawKeyPage)
+      && rawKeyPage > 1 && rawKeyPage <= thumbnails.length
+      && (!Number.isInteger(page) || rawKeyPage >= page)
+      ? rawKeyPage
+      : null;
+
+    if (answerKeyPage) {
+      console.log(`📐 Answer key starts on page ${answerKeyPage} of ${thumbnails.length}.`);
+    } else if (parsed.answer_key_start_page != null) {
+      console.warn(`⚠️ Structure pass returned an unusable answer key page (${parsed.answer_key_start_page}); relying on the per-page filter instead.`);
+    }
+
     const expected = {
       questionsPerPage: Number.isInteger(parsed.questions_per_page) ? parsed.questions_per_page : null,
       totalQuestions: Number.isInteger(parsed.total_questions) ? parsed.total_questions : null,
@@ -1185,14 +1268,14 @@ async function detectMathStartPage(pdfPath) {
 
     if (!Number.isInteger(page) || page < 2 || page > thumbnails.length) {
       console.warn(`⚠️ Structure pass returned an unusable math start page (${parsed.math_start_page}); falling back to the row rule.`);
-      return { mathStartPage: null, expected };
+      return { mathStartPage: null, answerKeyPage, expected };
     }
 
     console.log(`📐 Math section starts on page ${page} of ${thumbnails.length}.`);
-    return { mathStartPage: page, expected };
+    return { mathStartPage: page, answerKeyPage, expected };
   } catch (error) {
     console.error('⚠️ Structure pass failed; falling back to the row rule:', error.message);
-    return { mathStartPage: null, expected: null };
+    return { mathStartPage: null, answerKeyPage: null, expected: null };
   }
 }
 
@@ -1249,14 +1332,14 @@ function writeTranscriptionCache(pdfKey, image, questions) {
 
 // Phase one: page in, questions out. Touches no shared state, so it is safe to
 // run several of these at once.
-async function transcribePage(image, pdfKey, nextImage) {
+async function transcribePage(image, pdfKey) {
   const cached = readTranscriptionCache(pdfKey, image);
   if (cached) {
     console.log(`♻️  ${path.basename(image)}: reusing cached transcription (${cached.length} question(s)).`);
     return cached;
   }
 
-  console.log(`Transcribing image: ${image}${nextImage ? ' (+ next page for continuity)' : ''}`);
+  console.log(`Transcribing image: ${image}`);
   const base64Image = fs.readFileSync(image, { encoding: 'base64' });
 
   const content = [
@@ -1267,15 +1350,12 @@ async function transcribePage(image, pdfKey, nextImage) {
             If there is a graph, write %GRAPH% at the beginning of the question. If there are any italics, use *text*. If there are any quotes, use "text". STRICTLY FOLLOW: If there are any underlines, use {text}.
             "section" is "Math" when the question turns on equations, numbers, graphs, or mathematical reasoning, and "Reading and Writing" when it is built on a passage or literary text.
             For Math questions: write every equation, expression, fraction, exponent, radical, or inequality as LaTeX wrapped in single dollar signs, e.g. $x^2 + \\\\frac{3}{4} \\\\leq 12$. Math questions usually have no passage; leave "passage" as an empty string in that case.
-            "correct_answer" is STRICTLY a single capital letter — A, B, C, or D — and nothing else. Never the text of the choice, never the letter and the text together. The ONLY exception is a question that prints no answer choices at all (a student-produced response, which only happens in Math): there, and only there, put the answer value itself, such as 7 or 3/4 or 0.25.
+            Do NOT work out or report which answer is correct. You are transcribing what is printed, not sitting the exam. Nothing you return should say which choice is right.
             If a question has no answer choices at all, omit the "\\n\\nA) ... D)" block entirely and put only the question text in "question".
             Report the number printed beside each question in "question_number"; use null if the page shows no number for it.
-            You may be shown TWO images. The FIRST is the page you are transcribing. The SECOND, when present, is the page that follows it, given to you only so you can finish a question that runs past the bottom of the first page.
-            Transcribe ONLY the questions that BEGIN on the FIRST image — a question begins where its number and its passage or prompt start.
-            If a question begins on the first image and its passage or answer choices continue onto the second, read across and return that question COMPLETE, with all four choices.
-            Never transcribe a question that begins on the second image; the next request handles it.
-            If the FIRST image opens with leftover answer choices belonging to a question that began on the page before it, IGNORE them entirely — that question was already transcribed with its own request.
-            Because you can see the following page, "continues_previous_page" is always false and every question you return must be whole. Never invent a choice you cannot see.
+            This page may end partway through a question, and it may begin partway through one. Transcribe exactly what is printed and nothing more. Never invent a choice you cannot see, and never carry on a question from memory of a page you were not shown.
+            If the page OPENS with leftover answer choices belonging to a question whose prompt is not on this page, return them as one entry with "continues_previous_page" set to true and the choices in "question"; they are stitched back onto their question afterwards.
+            STOP at the answer key. Some exams print "Reading and Writing Module 1 Answers", "Math Module 2 Answers" or similar near the end, followed by a numbered list of letters such as "1. A  2. C  3. A". That list is NOT exam content. Never return it and never return the heading. If a page holds real questions above such a heading, transcribe those questions and ignore everything from the heading down.
             If the answer choices are themselves graphs, diagrams, number lines, or pictures rather than text, write %CHOICES_GRAPH% at the very beginning of the "question" field, then still transcribe the full question text after it, and leave out the "\\n\\nA) ... D)" block since there is no choice text to transcribe. The marker replaces the choices, never the question itself.
             Keep the two text fields strictly separate. "passage" holds ONLY the stimulus the question is about — the reading text, excerpt, table, or graph description printed above the prompt. Never put the prompt sentence in "passage"; if a question has no stimulus, use an empty string. "question" holds the prompt sentence (the part that asks something, e.g. "Which choice completes the text...?") followed by the answer choices, formatted as "[question]\\n\\nA) [Option A]\\nB) [Option B]\\nC) [Option C]\\nD) [Option D]". Never start "question" with "A)".`,
         },
@@ -1285,26 +1365,24 @@ async function transcribePage(image, pdfKey, nextImage) {
         },
   ];
 
-  // The following page rides along so a question split by the page break can be
-  // read whole in one go, rather than transcribed in halves and stitched back
-  // together afterwards. Sending each page twice roughly doubles image tokens —
-  // pennies per exam — and removes the split entirely.
-  if (nextImage) {
-    content.push({
-      type: 'text',
-      text: 'The image below is the NEXT page. Use it only to finish a question that begins on the page above. Do not transcribe questions that begin here.',
-    });
-    content.push({
-      type: 'image_url',
-      image_url: { url: `data:image/jpeg;base64,${fs.readFileSync(nextImage, { encoding: 'base64' })}` },
-    });
-  }
+  // The page that follows used to ride along so a question split by the page
+  // break could be read whole. The model would not hold the line: on a page
+  // holding several questions it transcribed both images despite being told not
+  // to, so pages 6 and 7 of one exam each returned questions 17, 18 and 19. Over
+  // twenty pages that turned 54 Reading and Writing questions into 81 entries,
+  // ran the write cursor into the math block, and had 24 real questions thrown
+  // away as overrun. Splits are stitched back together by mergePageContinuations
+  // instead, which cannot invent a question that was never on the page.
 
   const newMessage = await askModel(content, TRANSCRIPTION_SCHEMA);
 
   console.log("Raw GPT Response:", newMessage);
 
-  const questions = parseTranscriptionResponse(newMessage);
+  // The answer key is filtered before the cache so a re-run cannot resurrect it.
+  const questions = stripAnswerKeyEntries(
+    parseTranscriptionResponse(newMessage),
+    path.basename(image),
+  );
   console.log(`Parsed ${questions.length} question(s) from ${path.basename(image)}.`);
 
   writeTranscriptionCache(pdfKey, image, questions);
@@ -1312,7 +1390,7 @@ async function transcribePage(image, pdfKey, nextImage) {
 }
 
 // Function to transcribe images
-async function transcribeImages(images, sheetName, pdfPath, mathStartPage, expected) {
+async function transcribeImages(images, sheetName, pdfPath, mathStartPage, expected, scope = EXAM_SCOPE.BOTH) {
   const responses = [];
   const pdfKey = pdfPath ? cacheKeyForPdf(pdfPath) : null;
 
@@ -1331,11 +1409,9 @@ async function transcribeImages(images, sheetName, pdfPath, mathStartPage, expec
     // pages cost fractions of a cent.
 
     const batch = images.slice(i, i + TRANSCRIBE_CONCURRENCY);
-    const done = await mapWithConcurrency(batch, TRANSCRIBE_CONCURRENCY, async (image, offset) => {
+    const done = await mapWithConcurrency(batch, TRANSCRIBE_CONCURRENCY, async (image) => {
       try {
-        // The page after this one, so a question running over the break is read whole.
-        const nextImage = images[i + offset + 1];
-        return { image, questions: await transcribePage(image, pdfKey, nextImage) };
+        return { image, questions: await transcribePage(image, pdfKey) };
       } catch (error) {
         console.error(`Error processing image ${path.basename(image)}:`, error.message);
         return { image, error: error.message };
@@ -1348,9 +1424,15 @@ async function transcribeImages(images, sheetName, pdfPath, mathStartPage, expec
     // stop early and leave the last pages of math untranscribed.
   }
 
+  // A number stranded at the foot of a page is handed to the question that starts
+  // the next one, before anything is merged or counted. This runs first because a
+  // numberless question is placed by the running cursor, which puts it in the next
+  // question's row and pushes that question off the sheet.
+  const numbered = rejoinDanglingNumbers(transcribed);
+
   // Questions split by a page break are rejoined before anything is counted, so
   // the tail of one does not get written as a question in its own right.
-  const stitched = mergePageContinuations(transcribed);
+  const stitched = mergePageContinuations(numbered);
 
   // Phase two is strictly sequential and in page order, because every row the
   // sheet hands out depends on how many rows were handed out before it.
@@ -1361,7 +1443,14 @@ async function transcribeImages(images, sheetName, pdfPath, mathStartPage, expec
   // every page after it. Nothing else writes to this tab mid-run, and the number
   // of rows each page consumes is already known, so the count can be kept here.
   let cursor = await getNextRow(sheetName);
+  if (scope !== EXAM_SCOPE.BOTH) {
+    const window = rowWindowFor(scope);
+    console.log(`📐 ${scope === EXAM_SCOPE.MATH ? 'Math' : 'Reading and Writing'} only`
+      + `: writing rows ${window.first}-${window.last}.`);
+  }
   const rowBuffer = new Map(); // row number -> the eight cells C..J
+  const rowIssues = [];        // { row, detail, question } for the end-of-run report
+  const writtenRows = [];      // every row that got a question, for the same report
   const assignRow = createRowAssigner();
 
   for (const page of stitched) {
@@ -1383,6 +1472,7 @@ async function transcribeImages(images, sheetName, pdfPath, mathStartPage, expec
           pageNumber,
           nextRow: cursor,
           mathStartPage,
+          scope,
         });
 
         for (const note of plan.notes) console.warn(note);
@@ -1404,11 +1494,19 @@ async function transcribeImages(images, sheetName, pdfPath, mathStartPage, expec
         const { startRow, isMathPage } = plan;
         parseMessage = plan.questions;
 
+        // Problems are collected per question rather than logged against
+        // startRow + i, because placeQuestions may send a question to a different
+        // row than its position on the page suggests.
+        const problemsByIndex = parseMessage.map(() => []);
+
         const valuesToAppend = parseMessage.map((raw, i) => {
+          const flag = (detail) => problemsByIndex[i].push({ detail, question: raw.question || raw.passage });
+
           // Recover the question when the model put all of it in the passage.
           const q = salvageQuestionFields(raw);
           if (!raw.question && q.question) {
             console.warn(`⚠️ Row ${startRow + i}: the question was inside the passage; split it back out.`);
+            flag('the question was inside the passage; split back out');
           }
           console.log("RAW QUESTION:", JSON.stringify(q.question));
           let { stem, choiceA, choiceB, choiceC, choiceD } = parseQuestion(q.question);
@@ -1423,7 +1521,12 @@ async function transcribeImages(images, sheetName, pdfPath, mathStartPage, expec
             stem = stem.split(CHOICE_GRAPH_MARKER).join('').trim();
             if (!stem) {
               console.warn(`⚠️ Row ${startRow + i}: the transcriber returned only ${CHOICE_GRAPH_MARKER} with no question text.`);
+              flag(`only ${CHOICE_GRAPH_MARKER} came back — no question text`);
             }
+          }
+
+          if (!String(stem).trim()) {
+            flag('no question text was parsed out of this entry');
           }
 
           // A multiple-choice question with only some of its choices means a page
@@ -1434,38 +1537,42 @@ async function transcribeImages(images, sheetName, pdfPath, mathStartPage, expec
           if (filledChoices > 0 && filledChoices < 4) {
             const missing = ['A', 'B', 'C', 'D'].filter((_, n) => !String(choices[n]).trim());
             console.warn(`⚠️ Row ${startRow + i}: only ${filledChoices} of 4 choices — missing ${missing.join(', ')}.`);
-          }
-
-          // The model returns the choice's text as often as its letter, so the
-          // letter is recovered from the choices rather than taken on trust.
-          const { answer, matched } = normaliseAnswer(q.correct_answer, [choiceA, choiceB, choiceC, choiceD]);
-          if (!matched) {
-            console.warn(`⚠️ Row ${startRow + i}: answer ${JSON.stringify(q.correct_answer)} matches none of the choices; left as is.`);
+            flag(`only ${filledChoices} of 4 choices — missing ${missing.join(', ')}`);
           }
 
           const section = sectionFor(startRow + i);
           if (q.section && !q.section.toLowerCase().startsWith(section.slice(0, 4).toLowerCase())) {
             console.warn(`⚠️ Row ${startRow + i}: transcriber said "${q.section}", position says "${section}" — using position.`);
+            flag(`read as "${q.section}" but its row is ${section}`);
           }
-          return [section, q.passage || '', stem, choiceA, choiceB, choiceC, choiceD, answer];
+
+          // Column J is written empty rather than skipped, so a re-run clears any
+          // guessed answer a previous run left behind.
+          return [section, q.passage || '', stem, choiceA, choiceB, choiceC, choiceD, ''];
         });
 
         // Prefer the printed question number over the running cursor, so one
         // missing question leaves a hole instead of shifting everything below it.
-        valuesToAppend.forEach((row, i) => {
-          const q = parseMessage[i];
-          const exact = assignRow(q.question_number, isMathPage || /^\s*math/i.test(q.section || ''));
-          const target = exact || startRow + i;
-          if (exact && exact !== startRow + i) {
-            console.warn(`↪️  Question ${q.question_number} belongs in row ${exact}, not ${startRow + i}; using the printed number.`);
-          }
-          if (rowBuffer.has(target)) {
-            console.warn(`⚠️ Row ${target} already holds a question; keeping the first and skipping this one.`);
-            return;
-          }
-          rowBuffer.set(target, row);
+        const placement = placeQuestions({
+          rows: valuesToAppend,
+          questions: parseMessage,
+          startRow,
+          isMathPage,
+          assignRow,
+          taken: rowBuffer,
+          scope,
         });
-        cursor = startRow + valuesToAppend.length; // advance without re-reading
+        for (const note of placement.notes) console.warn(note);
+        for (const claim of placement.claims) {
+          rowBuffer.set(claim.row, claim.values);
+          // Tracked separately because rowBuffer is emptied on every flush.
+          writtenRows.push(claim.row);
+          // A question's problems belong to the row it actually landed in.
+          for (const problem of problemsByIndex[claim.index] || []) {
+            rowIssues.push({ row: claim.row, ...problem });
+          }
+        }
+        cursor = placement.nextCursor; // advance without re-reading
 
         if (rowBuffer.size >= FLUSH_EVERY_ROWS) await flushRowBuffer(rowBuffer, sheetName);
         responses.push({
@@ -1485,6 +1592,13 @@ async function transcribeImages(images, sheetName, pdfPath, mathStartPage, expec
 
   reportRunHealth(stitched, responses, expected, sheetName);
 
+  // Everything below already appeared in the log, scattered across hundreds of
+  // lines of raw model output. This gathers it into one block so a run's problems
+  // can be read off the bottom instead of hunted for.
+  for (const line of formatRowReport({ issues: rowIssues, filledRows: writtenRows, scope, sheetName })) {
+    console.warn(line);
+  }
+
   if (!responses.some(r => r.error)) {
     clearTranscriptionCache(pdfKey);
   } else {
@@ -1501,12 +1615,17 @@ async function transcribeImages(images, sheetName, pdfPath, mathStartPage, expec
     .then(result => console.log('Final JSON result:', JSON.stringify(result, null, 2)))
     .catch(error => console.error('Processing failed:', error.message));
 
-  // Optionally, clean up the local file after processing
+  // The export is kept rather than deleted: it is the only artefact `npm run
+  // score` can be pointed at, and deleting it meant every check of whether a
+  // change helped needed a fresh run and a fresh set of API calls.
   try {
-    fs.unlinkSync(uniqueFileName);
-    console.log(`✅ Cleaned up temporary file: ${uniqueFileName}`);
+    fs.mkdirSync(EXPORTS_DIR, { recursive: true });
+    const kept = path.join(EXPORTS_DIR, path.basename(uniqueFileName));
+    fs.renameSync(uniqueFileName, kept);
+    console.log(`💾 Export kept at ${kept}`);
+    console.log(`   Score it with: npm run score -- fixtures/${sheetName}.json ${kept}`);
   } catch (error) {
-    console.error(`❌ Error cleaning up file: ${error.message}`);
+    console.error(`❌ Could not keep the export: ${error.message}`);
   }
 
   return responses;
@@ -1566,7 +1685,8 @@ app.post('/upload-pdf', express.raw({ type: 'application/pdf', limit: '250mb' })
     fs.writeFileSync(pdfFilePath, req.body);
 
     // A dropped PDF is transcribed straight from disk — no Drive round trip.
-    const { sheetName, responses } = await processOnePdf(pdfFilePath, name, { archivePages: false });
+    const scope = scopeFromRequest(req.query);
+    const { sheetName, responses } = await processOnePdf(pdfFilePath, name, { archivePages: false, scope });
     const failures = responses.filter(r => r.error).map(r => ({ sheet: sheetName, image: r.image, error: r.error }));
 
     res.status(200).json({
@@ -1623,7 +1743,9 @@ app.post('/transcribe-uploaded', async (req, res) => {
     }
 
     const sheetName = await createDefault(SPREADSHEET_ID);
-    const responses = await transcribeImages(images, sheetName);
+    const responses = await transcribeImages(
+      images, sheetName, null, null, null, scopeFromRequest(req.body),
+    );
     const failures = responses.filter(r => r.error);
 
     fs.rmSync(STAGING_DIR, { recursive: true, force: true });
@@ -1643,9 +1765,168 @@ app.post('/transcribe-uploaded', async (req, res) => {
   }
 });
 
+// --- Answer key ------------------------------------------------------------
+// Column J is the one thing question transcription cannot produce: it is never
+// shown a key, and asked to solve the questions itself it got 17 of 95 right.
+// This reads a key that has been photographed or screenshotted and writes those
+// letters straight into J, leaving every other column alone.
+
+const ANSWER_KEY_DIR = path.join(OUTPUT_DIR, 'answer-key');
+
+const ANSWER_KEY_SCHEMA = {
+  name: 'answer_key',
+  strict: true,
+  schema: {
+    type: 'object',
+    additionalProperties: false,
+    required: ['modules'],
+    properties: {
+      modules: {
+        type: 'array',
+        description: 'One entry per module the key covers, in exam order.',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['module', 'answers'],
+          properties: {
+            module: { type: 'string', enum: ANSWER_KEY_MODULES.map(m => m.id) },
+            answers: {
+              type: 'array',
+              description: 'The answers for this module ordered by question number, starting at 1.',
+              items: { type: 'string' },
+            },
+          },
+        },
+      },
+    },
+  },
+};
+
+// The key can run across several images, so all of them go in one request: a
+// module is regularly split down a page break, and a model shown one page at a
+// time has no way to tell a module's tail from a module of its own.
+function answerKeyPrompt(scope) {
+  const wanted = answerKeyModulesFor(scope);
+  const expected = wanted
+    .map(m => `"${m.id}" (${m.label}, ${m.count} questions)`)
+    .join(', ');
+
+  return `You are reading the ANSWER KEY of a digital SAT practice exam. Every image below is a page of that key, given in the order the pages appear. Read them as one continuous key.
+
+Return ONLY the answers. Do not transcribe questions, passages, headings, or page numbers, and never work out an answer yourself — copy exactly what the key prints.
+
+Group the answers by module. Report only these modules: ${expected}. Each module's "answers" array is ordered by question number starting at 1, with the answer to question 1 first. Report exactly one entry per module, even when its answers are split across two images.
+
+Answer keys are printed in several layouts and you must work out which one you are looking at:
+- Labelled lists. Headings such as "Reading and Writing Module 1 Answers", "Math Module 2 Answers" name the module, followed by a numbered list like "1. A  2. C  3. A". The heading tells you the module directly. A list may run onto the next image and continue there without repeating its heading.
+- Unlabelled tables. A grid of number/answer pairs with no headings at all, often four blocks side by side. Read it COLUMN BY COLUMN, left to right, top to bottom — never row by row across the page. Each block's numbering restarts at 1, and a restart is where one module ends and the next begins.
+- Any other layout: use the question numbering. Numbers run 1 upward within a module and restart at 1 when the next module starts.
+
+When the modules are not labelled, identify them by size and order: the two Reading and Writing modules come first and hold 27 questions each, then the two Math modules hold 22 each.
+
+Answers are usually the letters A, B, C or D — report a bare capital letter, dropping any brackets or full stops printed around it. Math modules also contain student-produced responses, which are numbers rather than letters: "28.2", "-3", "36/5", "17/2", "2353", "8+32√85+16√97". Copy these EXACTLY as printed, including fractions, minus signs, decimals and radicals. Never convert a fraction to a decimal, never round, and never reorder the characters.
+
+If a module is not present in these images, leave it out entirely rather than guessing or padding it. If a single answer is unreadable, use an empty string for that position so the answers after it keep their numbering.`;
+}
+
+app.post('/upload-answer-key', express.raw({ type: ['image/png', 'image/jpeg'], limit: '50mb' }), (req, res) => {
+  try {
+    if (!req.body || !req.body.length) {
+      return res.status(400).json({ success: false, message: 'No image received.' });
+    }
+
+    if (req.query.reset === 'true' && fs.existsSync(ANSWER_KEY_DIR)) {
+      fs.rmSync(ANSWER_KEY_DIR, { recursive: true, force: true });
+    }
+    fs.mkdirSync(ANSWER_KEY_DIR, { recursive: true });
+
+    // Pages are read in the order they were dropped, not in filename order, so
+    // the index the client sends is what fixes the sequence.
+    const index = String(Number(req.query.index) || 0).padStart(3, '0');
+    const name = safeUploadName(req.query.name, `page-${index}.png`, ['.png', '.jpg', '.jpeg']);
+    fs.writeFileSync(path.join(ANSWER_KEY_DIR, `${index}-${name}`), req.body);
+
+    res.status(200).json({ success: true, staged: fs.readdirSync(ANSWER_KEY_DIR).length });
+  } catch (error) {
+    console.error('Error staging answer key page:', error);
+    res.status(500).json({ success: false, message: error.message || 'Failed to stage the image.' });
+  }
+});
+
+app.post('/transcribe-answer-key', async (req, res) => {
+  try {
+    const { sheetName, newSheet } = req.body || {};
+    if (!newSheet && !sheetName) {
+      return res.status(400).json({ success: false, message: 'Pick a sheet to write the key into.' });
+    }
+    if (!fs.existsSync(ANSWER_KEY_DIR)) {
+      return res.status(400).json({ success: false, message: 'No answer key pages have been uploaded.' });
+    }
+
+    const images = fs.readdirSync(ANSWER_KEY_DIR)
+      .filter(f => /\.(png|jpe?g)$/i.test(f))
+      .sort()
+      .map(f => path.join(ANSWER_KEY_DIR, f));
+
+    if (!images.length) {
+      return res.status(400).json({ success: false, message: 'No answer key pages have been uploaded.' });
+    }
+
+    const scope = scopeFromRequest(req.body);
+    const content = [
+      { type: 'text', text: answerKeyPrompt(scope) },
+      ...images.map(image => ({
+        type: 'image_url',
+        image_url: { url: `data:image/jpeg;base64,${fs.readFileSync(image, { encoding: 'base64' })}` },
+      })),
+    ];
+
+    console.log(`🔑 Reading an answer key from ${images.length} image(s) in one request...`);
+    const raw = await askModel(content, ANSWER_KEY_SCHEMA);
+    console.log('Raw answer key response:', raw);
+
+    const { values, first, last, written, notes } = placeAnswerKey(parseAnswerKeyResponse(raw), scope);
+    notes.forEach(note => console.warn(`⚠️ ${note}`));
+
+    if (!written) {
+      return res.status(200).json({
+        success: false,
+        message: 'No answers could be read from those images. Nothing was written.',
+        notes,
+      });
+    }
+
+    const target = newSheet ? await createDefault(SPREADSHEET_ID) : sheetName;
+
+    // Column J only. The key knows nothing about the other columns, and a wider
+    // range would blank whatever transcription put in them.
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${target}!J${first}:J${last}`,
+      valueInputOption: 'RAW',
+      resource: { values },
+    });
+    console.log(`✅ Wrote ${written} answer(s) to ${target}!J${first}:J${last}.`);
+
+    fs.rmSync(ANSWER_KEY_DIR, { recursive: true, force: true });
+
+    res.status(200).json({
+      success: true,
+      sheetName: target,
+      written,
+      range: `J${first}:J${last}`,
+      message: `Wrote ${written} answer(s) to ${target}!J${first}:J${last}.`,
+      notes,
+    });
+  } catch (error) {
+    console.error('Error transcribing the answer key:', error);
+    res.status(500).json({ success: false, message: error.message || 'Failed to read the answer key.' });
+  }
+});
+
 app.post('/process-pdf', async (req, res) => {
   try {
-    const failures = await processPdfAndUpload();
+    const failures = await processPdfAndUpload(scopeFromRequest(req.body));
     if (failures.length > 0) {
       res.status(200).json({
         success: false,
@@ -1842,6 +2123,7 @@ async function processExcelFile(filePath, sheetName) {
       const row = jsonData[i];
       if (!row) continue;
 
+      const sheetRow = i + 1; // jsonData[0] is the header, which is sheet row 1
       if (!row[2] && !row[3] && !row[4]) continue; // Skip if C, D, E are all empty
 
       if (/^\s*math/i.test(row[2] || '')) inMathSection = true;
@@ -1857,15 +2139,17 @@ async function processExcelFile(filePath, sheetName) {
 
       const question = `${row[3] || ''}\n\n${row[4] || ''}\n\n${choicesText}`.trim();
 
-      // The classifier is trained on Reading and Writing only, so math rows skip it.
-      // 'N/A' rather than '' because TwiceToSheet finds its next row by counting
-      // non-empty cells in column K — blanks would knock the rows out of alignment.
+      // The classifier is trained on Reading and Writing only, so math rows are
+      // never sent to it and their three columns are left empty. They used to be
+      // filled with 'N/A' only because TwiceToSheet located itself by counting
+      // non-empty cells in column K; it now writes to an explicit row instead.
       if (inMathSection) {
         results.push({
+          row: sheetRow,
           question,
-          passageType: 'N/A',
-          questionType: 'N/A',
-          difficultyLevel: 'N/A'
+          passageType: '',
+          questionType: '',
+          difficultyLevel: ''
         });
         continue;
       }
@@ -1894,6 +2178,7 @@ async function processExcelFile(filePath, sheetName) {
           .map(part => part.trim().split(': ')[1]); // Get the value after ':'
 
         results.push({
+          row: sheetRow,
           question,
           passageType,
           questionType,
@@ -1903,6 +2188,7 @@ async function processExcelFile(filePath, sheetName) {
       } catch (error) {
         console.error('Error processing row:', error);
         results.push({
+          row: sheetRow,
           question,
           passageType: 'Error',
           questionType: 'Error',
@@ -1911,15 +2197,10 @@ async function processExcelFile(filePath, sheetName) {
       }
     }
 
-    // Format classifications as three separate columns
-    const classificationsToAppend = results.map(result => [
-      result.passageType,
-      result.questionType,
-      result.difficultyLevel
-    ]);
-
-    // Append classifications to sheet
-    await TwiceToSheet(classificationsToAppend, sheetName);
+    // Each classification is written to the row it came from, so a gap in the
+    // questions stays a gap instead of pulling everything below it up a row.
+    const { startRow, values } = alignClassifications(results);
+    if (values.length) await TwiceToSheet(values, sheetName, startRow);
 
     return results;
 
@@ -2239,6 +2520,7 @@ app.get('/connection-info', async (req, res) => {
     pdf: label(pdfName, FOLDER_PDF),
     generate: spreadsheet,
     regenerate: spreadsheet,
+    answerKey: spreadsheet,
   });
 });
 
