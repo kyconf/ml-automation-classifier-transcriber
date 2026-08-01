@@ -38,22 +38,26 @@ test('a tail is folded into the question it belongs to', () => {
   assert.match(out[0].questions[0].question, /To discuss how Chloe Zhao/);
 });
 
-test('the real choices replace ones the model invented for the head', () => {
-  // Row 8 of the exported sheet held "The text argues/describes/discusses/explains",
-  // none of which were printed on the page.
-  const invented = 'Which choice best states the main purpose of the text?\n\n'
-    + 'A) The text argues\nB) The text describes\nC) The text discusses\nD) The text explains';
-  const real = 'A) To discuss how...\nB) To emphasize...\nC) To summarize...\nD) To argue that...';
+test('a complete question is never overwritten by a stray continuation', () => {
+  // This assertion was reversed after a production run. Previously the tail
+  // replaced the head's choices outright, to fix cases where the model invented
+  // them. But the model also emits continuations on pages whose questions are
+  // already complete, and overwriting then destroyed good data: a hermit crab
+  // question came out with "C) these" taken from a grammar question two pages
+  // away, and its real "19%" was gone. Once a question has all four choices
+  // there is no way to tell invented ones from genuine ones, so the safe move is
+  // to leave it alone. Inventing is now forbidden by the prompt instead.
+  const complete = 'According to the table, what percentage of hermit crabs tried to flip the shell?\n\n'
+    + 'A) 35%\nB) 0%\nC) 19%\nD) 70%';
 
   const out = mergePageContinuations([
-    { image: 'page-02.png', questions: [head(invented)] },
-    { image: 'page-03.png', questions: [tail(real, 'B')] },
+    { image: 'page-42.png', questions: [head(complete)] },
+    { image: 'page-43.png', questions: [tail('C) these', 'C')] },
   ]);
 
   const q = out[0].questions[0];
-  assert.doesNotMatch(q.question, /The text argues/, 'invented choices should be gone');
-  assert.match(q.question, /To discuss how/);
-  assert.equal(q.correct_answer, 'B', 'the tail carries the answer that matches the real choices');
+  assert.match(q.question, /C\) 19%/, 'the real choice must survive');
+  assert.doesNotMatch(q.question, /these/, 'the stray tail must not bleed in');
 });
 
 test('the question count drops back to the true number', () => {
