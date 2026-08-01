@@ -13,6 +13,7 @@ drive_token.json
 .env
 node_modules
 converted_images
+.transcription-cache
 dist
 dist-ssr
 *.local

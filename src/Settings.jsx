@@ -1,8 +1,5 @@
 import { useEffect, useState } from 'react';
-import { X, Eye, EyeOff, Upload, Check, Loader2, KeyRound, SlidersHorizontal, HardDrive, FileSpreadsheet, ExternalLink } from 'lucide-react';
-
-const googleDriveUrl = 'https://drive.google.com/drive/folders/1c3odLY__uNMp1-FkP7bSDtaZ90K08riA?usp=sharing';
-const googleSheetsUrl = 'https://docs.google.com/spreadsheets/d/1wtaO0rdKW3WC1TBQBDRSUqQZ2t2yPsrHGnSeLJmr2pA/edit?usp=sharing';
+import { X, Eye, EyeOff, Upload, Check, Loader2, KeyRound, SlidersHorizontal } from 'lucide-react';
 
 // ipcRenderer is available because the Electron window runs with nodeIntegration.
 // window.require avoids Vite trying to bundle 'electron' at build time.
@@ -157,14 +154,6 @@ export default function Settings({ onClose }) {
                 </div>
                 <p className="mt-2 text-xs text-slate-500">Uploaded once and stored securely on this machine — you won't be asked again.</p>
               </div>
-
-              <div>
-                <p className="mb-2 text-sm font-medium text-slate-200">Open in browser</p>
-                <div className="flex gap-2">
-                  <LinkButton icon={HardDrive} label="Drive" onClick={() => window.open(googleDriveUrl, '_blank')} />
-                  <LinkButton icon={FileSpreadsheet} label="Sheets" onClick={() => window.open(googleSheetsUrl, '_blank')} />
-                </div>
-              </div>
             </div>
           ) : (
             <div className="flex flex-col gap-4">
@@ -208,19 +197,6 @@ export default function Settings({ onClose }) {
         </div>
       </div>
     </div>
-  );
-}
-
-function LinkButton({ icon: Icon, label, onClick }) {
-  return (
-    <button
-      onClick={onClick}
-      className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm font-medium text-slate-200 transition-colors hover:bg-slate-700"
-    >
-      <Icon size={16} />
-      {label}
-      <ExternalLink size={13} className="text-slate-500" />
-    </button>
   );
 }
 
