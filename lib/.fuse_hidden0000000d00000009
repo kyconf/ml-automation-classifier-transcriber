@@ -514,48 +514,6 @@ export function formatRowReport({ issues = [], filledRows = [], scope = EXAM_SCO
   return lines;
 }
 
-// A run that misses a question leaves a gap, and a gap is bracketed: the page
-// holding the question before it and the page holding the one after it are known,
-// and the missing question is on one of them. That is enough to go back and ask
-// for it by name — a far narrower request than "transcribe this page", which is
-// what already failed.
-//
-// Capped, because a run that lost most of its questions has something
-// systemically wrong and re-asking eighty pages would cost real money to no end.
-export const MAX_RETRIES = 12;
-
-export function planRetries({ filledRows = [], rowToPage = new Map(), scope = EXAM_SCOPE.BOTH } = {}) {
-  const window = rowWindowFor(scope);
-  const filled = new Set(filledRows);
-  const plans = [];
-  const notes = [];
-
-  for (let row = window.first; row <= window.last; row += 1) {
-    if (filled.has(row)) continue;
-    const slot = describeRow(row);
-    if (!slot) continue;
-
-    // Only the immediate neighbours. A question two rows from anything known is
-    // not bracketed, it is guessed at.
-    const pages = [...new Set(
-      [rowToPage.get(row - 1), rowToPage.get(row + 1)].filter((p) => Number.isInteger(p)),
-    )].sort((a, b) => a - b);
-
-    if (!pages.length) continue;
-    plans.push({ row, number: slot.number, isMath: slot.section === 'Math', pages });
-  }
-
-  if (plans.length > MAX_RETRIES) {
-    notes.push(`⚠️ ${plans.length} row(s) are empty — too many to be individual misses, so no retries were made. Something is wrong with the run as a whole.`);
-    return { retries: [], notes };
-  }
-
-  for (const plan of plans) {
-    notes.push(`🔁 Row ${plan.row} (${plan.isMath ? 'Math' : 'Reading and Writing'} question ${plan.number}) is empty; re-reading page(s) ${plan.pages.join(', ')}.`);
-  }
-  return { retries: plans, notes };
-}
-
 // Line the classifier's output up with the rows it describes.
 //
 // Classifications used to be appended as one contiguous block starting wherever

@@ -78,11 +78,27 @@ test('twenty pages of doubled questions cannot push the cursor into the math blo
   assert.ok(cursor < FIRST_MATH_ROW, `cursor reached row ${cursor}; math starts at ${FIRST_MATH_ROW}`);
 });
 
-test('a question with no usable number falls back to its position on the page', () => {
+// REVERSED. This used to assert that a question with no printed number fell back
+// to its position on the page. That fallback is what put the mofongo question
+// into question 5's row and pushed question 5 off the sheet — the cursor is a
+// guess from page position with no relationship to the printed numbering.
+//
+// The rule now is that order beats coverage: one question in the wrong row
+// misaligns everything read against it, where a gap is merely a gap. Measured
+// across three exams this drops at most four entries, every one of which was
+// being guessed into a row regardless.
+test('a question with no usable number is left out rather than guessed at', () => {
   const out = place([null, null], { startRow: 40 });
 
-  assert.deepEqual(out.claims.map((c) => c.row), [40, 41]);
-  assert.equal(out.nextCursor, 42);
+  assert.deepEqual(out.claims, [], 'nothing is placed on a guess');
+  assert.equal(out.nextCursor, 40, 'and the cursor does not move');
+  assert.equal(out.notes.filter((n) => n.includes('No usable question number')).length, 2);
+});
+
+test('a numbered question on the same page is unaffected by one that is not', () => {
+  const out = place([null, 7, null], { startRow: 40 });
+
+  assert.deepEqual(out.claims.map((c) => c.row), [8], 'only question 7 lands, in its own row');
 });
 
 test('a question placed by its printed number carries the cursor with it', () => {

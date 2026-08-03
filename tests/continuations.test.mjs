@@ -186,13 +186,34 @@ test('an unnumbered tail is still folded in as before', () => {
   assert.match(out[0].questions[0].question, /C\) three/);
 });
 
-test('a numbered orphan choice block is kept rather than absorbed', () => {
+// REVERSED. This used to assert that a numbered orphan choice block was kept,
+// on the reasoning that a number means a question. A real run disproved it: a
+// tail can pick up a number — from the model, or from fillNumbersInOrder — and
+// row 37 of 202603asiav1 was then written as nothing but
+// "B) People who are likely to contact their elected representatives…", with no
+// stem and three of four choices. Row 73 was the same in the math block.
+//
+// What a tail has really lost is its STEM. So a number alone is not enough; the
+// entry must also have a stem to count as a question in its own right.
+test('a numbered entry with no stem is still a tail', () => {
   const out = mergePageContinuations([
-    { image: 'p1.png', questions: [head('Complete question?\n\nA) one\nB) two\nC) three\nD) four', { question_number: 7 })] },
-    { image: 'p2.png', questions: [head('A) w B) x C) y D) z', { question_number: 8 })] },
+    { image: 'p1.png', questions: [head('Which choice best states the main idea?\n\nA) one\nB) two', { question_number: 7 })] },
+    { image: 'p2.png', questions: [head('C) three D) four', { question_number: 8 })] },
   ]);
 
-  assert.equal(out[1].questions.length, 1, 'question 8 keeps its place in the run');
+  assert.equal(out[1].questions.length, 0, 'the choice block is not a question of its own');
+  assert.match(out[0].questions[0].question, /C\) three/, 'it belongs to the question above');
+});
+
+test('a numbered entry WITH a stem is still kept', () => {
+  // The usv1 case must not regress: a complete question mislabelled as a
+  // continuation stays a question, because it has a stem.
+  const out = mergePageContinuations([
+    { image: 'p1.png', questions: [head('Question seven?\n\nA) one\nB) two\nC) three\nD) four', { question_number: 7 })] },
+    { image: 'p2.png', questions: [head('Question eight?\n\nA) w\nB) x\nC) y\nD) z', { question_number: 8, continues_previous_page: true })] },
+  ]);
+
+  assert.equal(out[1].questions.length, 1);
   assert.equal(out[1].questions[0].question_number, 8);
 });
 

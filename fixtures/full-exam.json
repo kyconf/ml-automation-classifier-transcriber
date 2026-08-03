@@ -1,0 +1,594 @@
+{
+  "pdf": "any full 98-question exam",
+  "note": "Layout only: every one of the 98 template slots should hold a question, in the right section. Derived from the template, so it applies to ANY complete exam without needing an answer key. It measures how much of the exam reached the sheet and whether anything crossed the section boundary — not whether the text is right. For that you need a per-exam key.",
+  "questions": [
+    {
+      "row": 2,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 1
+    },
+    {
+      "row": 3,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 2
+    },
+    {
+      "row": 4,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 3
+    },
+    {
+      "row": 5,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 4
+    },
+    {
+      "row": 6,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 5
+    },
+    {
+      "row": 7,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 6
+    },
+    {
+      "row": 8,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 7
+    },
+    {
+      "row": 9,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 8
+    },
+    {
+      "row": 10,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 9
+    },
+    {
+      "row": 11,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 10
+    },
+    {
+      "row": 12,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 11
+    },
+    {
+      "row": 13,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 12
+    },
+    {
+      "row": 14,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 13
+    },
+    {
+      "row": 15,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 14
+    },
+    {
+      "row": 16,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 15
+    },
+    {
+      "row": 17,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 16
+    },
+    {
+      "row": 18,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 17
+    },
+    {
+      "row": 19,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 18
+    },
+    {
+      "row": 20,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 19
+    },
+    {
+      "row": 21,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 20
+    },
+    {
+      "row": 22,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 21
+    },
+    {
+      "row": 23,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 22
+    },
+    {
+      "row": 24,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 23
+    },
+    {
+      "row": 25,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 24
+    },
+    {
+      "row": 26,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 25
+    },
+    {
+      "row": 27,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 26
+    },
+    {
+      "row": 28,
+      "section": "Reading and Writing",
+      "module": 1,
+      "number": 27
+    },
+    {
+      "row": 29,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 1
+    },
+    {
+      "row": 30,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 2
+    },
+    {
+      "row": 31,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 3
+    },
+    {
+      "row": 32,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 4
+    },
+    {
+      "row": 33,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 5
+    },
+    {
+      "row": 34,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 6
+    },
+    {
+      "row": 35,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 7
+    },
+    {
+      "row": 36,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 8
+    },
+    {
+      "row": 37,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 9
+    },
+    {
+      "row": 38,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 10
+    },
+    {
+      "row": 39,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 11
+    },
+    {
+      "row": 40,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 12
+    },
+    {
+      "row": 41,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 13
+    },
+    {
+      "row": 42,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 14
+    },
+    {
+      "row": 43,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 15
+    },
+    {
+      "row": 44,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 16
+    },
+    {
+      "row": 45,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 17
+    },
+    {
+      "row": 46,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 18
+    },
+    {
+      "row": 47,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 19
+    },
+    {
+      "row": 48,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 20
+    },
+    {
+      "row": 49,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 21
+    },
+    {
+      "row": 50,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 22
+    },
+    {
+      "row": 51,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 23
+    },
+    {
+      "row": 52,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 24
+    },
+    {
+      "row": 53,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 25
+    },
+    {
+      "row": 54,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 26
+    },
+    {
+      "row": 55,
+      "section": "Reading and Writing",
+      "module": 2,
+      "number": 27
+    },
+    {
+      "row": 56,
+      "section": "Math",
+      "module": 1,
+      "number": 1
+    },
+    {
+      "row": 57,
+      "section": "Math",
+      "module": 1,
+      "number": 2
+    },
+    {
+      "row": 58,
+      "section": "Math",
+      "module": 1,
+      "number": 3
+    },
+    {
+      "row": 59,
+      "section": "Math",
+      "module": 1,
+      "number": 4
+    },
+    {
+      "row": 60,
+      "section": "Math",
+      "module": 1,
+      "number": 5
+    },
+    {
+      "row": 61,
+      "section": "Math",
+      "module": 1,
+      "number": 6
+    },
+    {
+      "row": 62,
+      "section": "Math",
+      "module": 1,
+      "number": 7
+    },
+    {
+      "row": 63,
+      "section": "Math",
+      "module": 1,
+      "number": 8
+    },
+    {
+      "row": 64,
+      "section": "Math",
+      "module": 1,
+      "number": 9
+    },
+    {
+      "row": 65,
+      "section": "Math",
+      "module": 1,
+      "number": 10
+    },
+    {
+      "row": 66,
+      "section": "Math",
+      "module": 1,
+      "number": 11
+    },
+    {
+      "row": 67,
+      "section": "Math",
+      "module": 1,
+      "number": 12
+    },
+    {
+      "row": 68,
+      "section": "Math",
+      "module": 1,
+      "number": 13
+    },
+    {
+      "row": 69,
+      "section": "Math",
+      "module": 1,
+      "number": 14
+    },
+    {
+      "row": 70,
+      "section": "Math",
+      "module": 1,
+      "number": 15
+    },
+    {
+      "row": 71,
+      "section": "Math",
+      "module": 1,
+      "number": 16
+    },
+    {
+      "row": 72,
+      "section": "Math",
+      "module": 1,
+      "number": 17
+    },
+    {
+      "row": 73,
+      "section": "Math",
+      "module": 1,
+      "number": 18
+    },
+    {
+      "row": 74,
+      "section": "Math",
+      "module": 1,
+      "number": 19
+    },
+    {
+      "row": 75,
+      "section": "Math",
+      "module": 1,
+      "number": 20
+    },
+    {
+      "row": 76,
+      "section": "Math",
+      "module": 1,
+      "number": 21
+    },
+    {
+      "row": 77,
+      "section": "Math",
+      "module": 1,
+      "number": 22
+    },
+    {
+      "row": 78,
+      "section": "Math",
+      "module": 2,
+      "number": 1
+    },
+    {
+      "row": 79,
+      "section": "Math",
+      "module": 2,
+      "number": 2
+    },
+    {
+      "row": 80,
+      "section": "Math",
+      "module": 2,
+      "number": 3
+    },
+    {
+      "row": 81,
+      "section": "Math",
+      "module": 2,
+      "number": 4
+    },
+    {
+      "row": 82,
+      "section": "Math",
+      "module": 2,
+      "number": 5
+    },
+    {
+      "row": 83,
+      "section": "Math",
+      "module": 2,
+      "number": 6
+    },
+    {
+      "row": 84,
+      "section": "Math",
+      "module": 2,
+      "number": 7
+    },
+    {
+      "row": 85,
+      "section": "Math",
+      "module": 2,
+      "number": 8
+    },
+    {
+      "row": 86,
+      "section": "Math",
+      "module": 2,
+      "number": 9
+    },
+    {
+      "row": 87,
+      "section": "Math",
+      "module": 2,
+      "number": 10
+    },
+    {
+      "row": 88,
+      "section": "Math",
+      "module": 2,
+      "number": 11
+    },
+    {
+      "row": 89,
+      "section": "Math",
+      "module": 2,
+      "number": 12
+    },
+    {
+      "row": 90,
+      "section": "Math",
+      "module": 2,
+      "number": 13
+    },
+    {
+      "row": 91,
+      "section": "Math",
+      "module": 2,
+      "number": 14
+    },
+    {
+      "row": 92,
+      "section": "Math",
+      "module": 2,
+      "number": 15
+    },
+    {
+      "row": 93,
+      "section": "Math",
+      "module": 2,
+      "number": 16
+    },
+    {
+      "row": 94,
+      "section": "Math",
+      "module": 2,
+      "number": 17
+    },
+    {
+      "row": 95,
+      "section": "Math",
+      "module": 2,
+      "number": 18
+    },
+    {
+      "row": 96,
+      "section": "Math",
+      "module": 2,
+      "number": 19
+    },
+    {
+      "row": 97,
+      "section": "Math",
+      "module": 2,
+      "number": 20
+    },
+    {
+      "row": 98,
+      "section": "Math",
+      "module": 2,
+      "number": 21
+    },
+    {
+      "row": 99,
+      "section": "Math",
+      "module": 2,
+      "number": 22
+    }
+  ]
+}

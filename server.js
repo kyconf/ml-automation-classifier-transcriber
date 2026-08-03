@@ -19,6 +19,7 @@ import {
   mapWithConcurrency, reportRunHealth, planPageWrite, mergePageContinuations, isOrphanChoiceBlock, createRowAssigner,
   salvageQuestionFields, alignClassifications,
   stripAnswerKeyEntries, placeQuestions, formatRowReport, rejoinDanglingNumbers,
+  planRetries,
   EXAM_SCOPE, rowWindowFor,
   ANSWER_KEY_MODULES, answerKeyModulesFor, parseAnswerKeyResponse, placeAnswerKey,
 } from './lib/pipeline.js';
@@ -1332,6 +1333,39 @@ function writeTranscriptionCache(pdfKey, image, questions) {
 
 // Phase one: page in, questions out. Touches no shared state, so it is safe to
 // run several of these at once.
+// Ask one page for one question by name. The broad "transcribe everything here"
+// request already failed on this page, so this asks for far less: find question N
+// and return only it. Never cached — the cache holds the answer that was wrong.
+async function transcribeOneQuestion(image, questionNumber, isMath) {
+  console.log(`🔁 Re-reading ${path.basename(image)} for question ${questionNumber}...`);
+
+  const content = [
+    {
+      type: 'text',
+      text: `This is one page of an SAT practice exam. It should contain question ${questionNumber}${isMath ? ' of the Math section' : ''}, and an earlier pass missed it.
+        Find question ${questionNumber} on this page and return ONLY that question — not the questions before or after it, however clearly they are printed.
+        If question ${questionNumber} genuinely is not on this page, return an empty "questions" array. Do not return a different question instead, and do not invent one.
+        Set "question_number" to ${questionNumber}. Use \\n for single line breaks and \\n\\n for double line breaks.
+        If there is a graph, write %GRAPH% at the beginning of the question. If there are any italics, use *text*. If there are any quotes, use "text". STRICTLY FOLLOW: If there are any underlines, use {text}.
+        For Math questions: write every equation, expression, fraction, exponent, radical, or inequality as LaTeX wrapped in single dollar signs, e.g. $x^2 + \\\\frac{3}{4} \\\\leq 12$.
+        Do NOT work out or report which answer is correct.
+        "passage" holds ONLY the stimulus — the reading text, excerpt, table, or graph description printed above the prompt; use an empty string if there is none. "question" holds the prompt sentence followed by the answer choices, formatted as "[question]\\n\\nA) [Option A]\\nB) [Option B]\\nC) [Option C]\\nD) [Option D]". Never start "question" with "A)".`,
+    },
+    {
+      type: 'image_url',
+      image_url: { url: `data:image/jpeg;base64,${fs.readFileSync(image, { encoding: 'base64' })}` },
+    },
+  ];
+
+  const questions = stripAnswerKeyEntries(
+    parseTranscriptionResponse(await askModel(content, TRANSCRIPTION_SCHEMA)),
+    path.basename(image),
+  );
+  // Only the question that was asked for. Anything else is the same overreach
+  // that lost it in the first place.
+  return questions.filter((q) => Number(q.question_number) === Number(questionNumber));
+}
+
 async function transcribePage(image, pdfKey) {
   const cached = readTranscriptionCache(pdfKey, image);
   if (cached) {
@@ -1451,6 +1485,7 @@ async function transcribeImages(images, sheetName, pdfPath, mathStartPage, expec
   const rowBuffer = new Map(); // row number -> the eight cells C..J
   const rowIssues = [];        // { row, detail, question } for the end-of-run report
   const writtenRows = [];      // every row that got a question, for the same report
+  const rowToPage = new Map(); // row -> the page it came from, for targeted retries
   const assignRow = createRowAssigner();
 
   for (const page of stitched) {
@@ -1567,6 +1602,9 @@ async function transcribeImages(images, sheetName, pdfPath, mathStartPage, expec
           rowBuffer.set(claim.row, claim.values);
           // Tracked separately because rowBuffer is emptied on every flush.
           writtenRows.push(claim.row);
+          // Which page a row came from, so a gap can be traced back to the pages
+          // either side of it and re-read.
+          rowToPage.set(claim.row, pageNumber);
           // A question's problems belong to the row it actually landed in.
           for (const problem of problemsByIndex[claim.index] || []) {
             rowIssues.push({ row: claim.row, ...problem });
@@ -1585,6 +1623,46 @@ async function transcribeImages(images, sheetName, pdfPath, mathStartPage, expec
         image: image,
         error: error.message,
       });
+    }
+  }
+
+  // Second pass: the questions the first pass missed. Each gap is bracketed by
+  // the pages either side of it, so each one is asked for by name on the one or
+  // two pages it can be on. Anything still missing stays an empty row.
+  const { retries, notes: retryNotes } = planRetries({ filledRows: writtenRows, rowToPage, scope });
+  for (const note of retryNotes) console.warn(note);
+
+  // The same eight cells as the first pass, without its flagging — a retry that
+  // found nothing has nothing to flag.
+  const buildRetryRow = (raw, row) => {
+    const q = salvageQuestionFields(raw);
+    let { stem, choiceA, choiceB, choiceC, choiceD } = parseQuestion(q.question);
+    if (questionHasChoiceGraphs(q)) {
+      [choiceA, choiceB, choiceC, choiceD] = Array(4).fill(CHOICE_IMAGE_LABEL);
+      stem = stem.split(CHOICE_GRAPH_MARKER).join('').trim();
+    }
+    return [sectionFor(row), q.passage || '', stem, choiceA, choiceB, choiceC, choiceD, ''];
+  };
+
+  for (const retry of retries) {
+    for (const pageNumber of retry.pages) {
+      const image = images.find((img) => pageNumberFromImage(img) === pageNumber);
+      if (!image) continue;
+
+      try {
+        const [found] = await transcribeOneQuestion(image, retry.number, retry.isMath);
+        if (!found) continue;
+
+        const values = buildRetryRow(found, retry.row);
+        if (!String(values[2]).trim()) continue; // no stem means nothing was really found
+
+        rowBuffer.set(retry.row, values);
+        writtenRows.push(retry.row);
+        console.log(`✅ Recovered row ${retry.row} (question ${retry.number}) from page ${pageNumber}.`);
+        break; // found it; the other page need not be read
+      } catch (error) {
+        console.error(`Retry of page ${pageNumber} for question ${retry.number} failed:`, error.message);
+      }
     }
   }
 
