@@ -427,16 +427,18 @@ async function flushRowBuffer(buffer, sheetName) {
   const last = rowNumbers[rowNumbers.length - 1];
 
   // Gaps inside the span — a short Reading and Writing section, say — are written
-  // as blank rows so the block stays contiguous.
+  // as blank rows so the block stays contiguous. The span starts at D, not C:
+  // C holds the section, which the template fills on sheet creation and nothing
+  // here may overwrite. Padding a gap across C used to blank it.
   const values = [];
   for (let row = first; row <= last; row += 1) {
-    values.push(buffer.get(row) || Array(8).fill(''));
+    values.push(buffer.get(row) || Array(7).fill(''));
   }
 
   try {
     await sheets.spreadsheets.values.update({
       spreadsheetId: SPREADSHEET_ID,
-      range: `${sheetName}!C${first}:J${last}`,
+      range: `${sheetName}!D${first}:J${last}`,
       valueInputOption: 'RAW',
       resource: { values },
     });
@@ -1581,9 +1583,11 @@ async function transcribeImages(images, sheetName, pdfPath, mathStartPage, expec
             flag(`read as "${q.section}" but its row is ${section}`);
           }
 
+          // Row spans D–J. The section is derived above for the position check
+          // and fed to the prompt, but is not written: C is template data.
           // Column J is written empty rather than skipped, so a re-run clears any
           // guessed answer a previous run left behind.
-          return [section, q.passage || '', stem, choiceA, choiceB, choiceC, choiceD, ''];
+          return [q.passage || '', stem, choiceA, choiceB, choiceC, choiceD, ''];
         });
 
         // Prefer the printed question number over the running cursor, so one
@@ -1632,16 +1636,16 @@ async function transcribeImages(images, sheetName, pdfPath, mathStartPage, expec
   const { retries, notes: retryNotes } = planRetries({ filledRows: writtenRows, rowToPage, scope });
   for (const note of retryNotes) console.warn(note);
 
-  // The same eight cells as the first pass, without its flagging — a retry that
-  // found nothing has nothing to flag.
-  const buildRetryRow = (raw, row) => {
+  // The same seven cells (D–J) as the first pass, without its flagging — a retry
+  // that found nothing has nothing to flag.
+  const buildRetryRow = (raw) => {
     const q = salvageQuestionFields(raw);
     let { stem, choiceA, choiceB, choiceC, choiceD } = parseQuestion(q.question);
     if (questionHasChoiceGraphs(q)) {
       [choiceA, choiceB, choiceC, choiceD] = Array(4).fill(CHOICE_IMAGE_LABEL);
       stem = stem.split(CHOICE_GRAPH_MARKER).join('').trim();
     }
-    return [sectionFor(row), q.passage || '', stem, choiceA, choiceB, choiceC, choiceD, ''];
+    return [q.passage || '', stem, choiceA, choiceB, choiceC, choiceD, ''];
   };
 
   for (const retry of retries) {
@@ -1653,8 +1657,8 @@ async function transcribeImages(images, sheetName, pdfPath, mathStartPage, expec
         const [found] = await transcribeOneQuestion(image, retry.number, retry.isMath);
         if (!found) continue;
 
-        const values = buildRetryRow(found, retry.row);
-        if (!String(values[2]).trim()) continue; // no stem means nothing was really found
+        const values = buildRetryRow(found);
+        if (!String(values[1]).trim()) continue; // no stem means nothing was really found
 
         rowBuffer.set(retry.row, values);
         writtenRows.push(retry.row);
@@ -2191,10 +2195,10 @@ async function processExcelFile(filePath, sheetName) {
     }
 
     const results = [];
-    // Column C is written from the question's position in the exam rather than
-    // from the transcriber's guess, so it can be trusted here. The latch is kept
-    // because math never gives way back to Reading and Writing: if one row in the
-    // math block is somehow blank or wrong, the rows after it stay math.
+    // Column C comes from the sheet template rather than the transcriber's guess,
+    // so it can be trusted here. The latch is kept because math never gives way
+    // back to Reading and Writing: if one row in the math block is somehow blank
+    // or wrong, the rows after it stay math.
     let inMathSection = false;
 
     for (let i = 1; i < jsonData.length; i++) {
@@ -2202,7 +2206,10 @@ async function processExcelFile(filePath, sheetName) {
       if (!row) continue;
 
       const sheetRow = i + 1; // jsonData[0] is the header, which is sheet row 1
-      if (!row[2] && !row[3] && !row[4]) continue; // Skip if C, D, E are all empty
+      // Skip if D and E are both empty. C is not part of the test: the template
+      // fills it for every row, so including it would stop this from ever firing
+      // and export all 98 template rows as blanks.
+      if (!row[3] && !row[4]) continue;
 
       if (/^\s*math/i.test(row[2] || '')) inMathSection = true;
 
